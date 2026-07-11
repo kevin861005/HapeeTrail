@@ -1,0 +1,8 @@
+# 私人筆記，永不進 git
+*.local.md
+
+# Supabase local dev
+supabase/.temp/
+supabase/.branches/
+
+.DS_Store
