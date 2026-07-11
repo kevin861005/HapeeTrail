@@ -17,6 +17,8 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T5** 推上 GitHub（kevin861005/trailstamp）＋ CLAUDE.md 新增「開發守則」章節
+  ✅ 2026-07-12：CLAUDE.md §開發守則；remote origin 設定與 push（證據見 git log）
 - [x] **T1** 第一階段便條後端端到端：schema + RPC/RLS + docs/api/notes.md
   ✅ 2026-07-12：migration `supabase/migrations/20260712000000_notes.sql`（`supabase db reset` 套用成功）；
   `supabase/tests/notes.test.sql` 全綠（輸出 `ALL TESTS PASSED`，重跑 grep ERROR|FAIL = 0）；
