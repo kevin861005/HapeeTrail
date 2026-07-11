@@ -6,3 +6,6 @@ supabase/.temp/
 supabase/.branches/
 
 .DS_Store
+
+# Claude Code 本機設定（session 權限紀錄）
+.claude/
