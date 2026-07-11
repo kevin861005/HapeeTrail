@@ -8,7 +8,8 @@
 
 ## 待辦
 
-- [ ] **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
+- [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
+  ——等什麼：進入大量測試階段（2026-07-12 決定：開發期以本機 supabase 為主）
 - [ ] **T3** UGC 檢舉機制（App Store 審查前必須；`report_note` RPC + 隱藏 flag）
 - [ ] **T4** 便條 TTL 政策（產品決策；技術上為 pg_cron 一句 delete）
 
