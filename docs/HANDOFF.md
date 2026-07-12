@@ -22,6 +22,8 @@
 
 ## 近期變更
 
+- 2026-07-12（cli）：T8——契約文件語言中立化（notes.md v2.2 去 Swift、改 curl；
+  CLAUDE.md 協作規則同步改；此後 docs/api/ 不放 client 語言程式碼）。
 - 2026-07-12（cli）：T6/T7——openapi.yaml、my_notes/my_collection keyset RPC、
   Note 去 uuid、invalid_cursor 防呆；4 個 MINOR 發現經 panel 仲裁處置
   （紀錄：`docs/tasks/archive/T6-api-contract-v2.md`）。
