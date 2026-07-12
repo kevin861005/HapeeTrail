@@ -1,0 +1,437 @@
+openapi: 3.0.3
+info:
+  title: Trailstamp Notes API
+  version: "2.0.0"
+  license:
+    name: Proprietary
+    url: https://github.com/kevin861005/trailstamp
+  description: |
+    第一階段便條 API。所有業務 endpoint 都是 Supabase PostgREST 的 RPC（POST /rest/v1/rpc/{fn}）。
+
+    **每個請求都必須帶兩個 header**：
+    - `apikey`: 專案 publishable key（本地開發值見 `supabase status`）
+    - `Authorization: Bearer <access_token>`（來自匿名登入；`/auth/v1/signup` 本身只需 apikey）
+
+    **錯誤契約**：業務錯誤一律 HTTP 400 ＋ `{"code":"P0001","message":"<token>"}`，
+    token 見各 endpoint 與 ApiError schema（字串已凍結，改名＝breaking change）。
+    401 / `PGRST3xx` / `42501` 等非 P0001 錯誤＝session 問題，走刷新流程。
+
+    Postman：直接 import 本檔即可產生 collection。
+servers:
+  - url: http://127.0.0.1:54321
+    description: 本地開發（supabase start）
+  - url: https://{project-ref}.supabase.co
+    description: Hosted（T2 部署後）
+    variables:
+      project-ref:
+        default: TBD
+tags:
+  - name: auth
+    description: 匿名 session（Supabase GoTrue）
+  - name: notes
+    description: 便條核心循環（留下／發現／撿起／我的列表）
+
+paths:
+  /auth/v1/signup:
+    post:
+      tags: [auth]
+      operationId: signInAnonymously
+      summary: 匿名登入（取得 session）
+      description: |
+        body 給空物件 `{}` 即為匿名註冊（等同 supabase-swift 的 `signInAnonymously()`）。
+        回傳的 `access_token` 用於後續所有請求的 Bearer。
+        ⚠️ 只在沒有既存 session 時呼叫——重複呼叫會鑄新 user id，孤兒化舊資料。
+      security:
+        - ApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+            example: {}
+      responses:
+        "200":
+          description: 新的匿名 session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "422":
+          description: GoTrue 錯誤（如匿名登入未啟用）——非本契約的業務錯誤範圍
+
+  /rest/v1/rpc/drop_note:
+    post:
+      tags: [notes]
+      operationId: dropNote
+      summary: 依當前位置留便條
+      description: |
+        回傳建立的 Note（content 為 trim 後的正規版本，client 應以回傳值取代本地草稿）。
+        ⚠️ 不冪等：timeout 後勿盲目重試，先以 my_notes 確認是否已建立。
+        錯誤 token：`not_authenticated` `invalid_coordinates` `content_empty`
+        `content_too_long` `active_note_limit`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_content, p_lat, p_lng]
+              properties:
+                p_content:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  description: 1–500 個 Unicode code point（伺服器先 btrim 再驗證）
+                p_lat:
+                  $ref: "#/components/schemas/Latitude"
+                p_lng:
+                  $ref: "#/components/schemas/Longitude"
+            example:
+              p_content: 神社後面的拉麵店超好吃
+              p_lat: 35.6595
+              p_lng: 139.7005
+      responses:
+        "200":
+          description: 建立的便條
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+        "400":
+          $ref: "#/components/responses/BusinessError"
+        "401":
+          $ref: "#/components/responses/AuthError"
+
+  /rest/v1/rpc/nearby_notes:
+    post:
+      tags: [notes]
+      operationId: nearbyNotes
+      summary: 100m 內便條提示（探索輪詢）
+      description: |
+        回傳 100m 內、非自己投放、未被撿走的便條 pin，最近優先、最多 20 筆
+        （截斷不另行標示）。刻意不含 content 與作者——內容是走進 50m 撿起的獎勵。
+        `pickable` 為呼叫當下快照，伺服器於撿起時重新驗證；client 勿硬編 50/100m。
+        錯誤 token：`not_authenticated` `invalid_coordinates`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_lat, p_lng]
+              properties:
+                p_lat:
+                  $ref: "#/components/schemas/Latitude"
+                p_lng:
+                  $ref: "#/components/schemas/Longitude"
+            example:
+              p_lat: 35.65977
+              p_lng: 139.7005
+      responses:
+        "200":
+          description: 附近便條提示（可能為空陣列）
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 20
+                items:
+                  $ref: "#/components/schemas/NearbyHint"
+        "400":
+          $ref: "#/components/responses/BusinessError"
+        "401":
+          $ref: "#/components/responses/AuthError"
+
+  /rest/v1/rpc/pickup_note:
+    post:
+      tags: [notes]
+      operationId: pickupNote
+      summary: 50m 內獨佔撿起
+      description: |
+        獨佔語意：全世界只有一人撿得到同一張，先到先贏；輸家收到 `note_taken`。
+        冪等重試：撿起成功但回應遺失時，同一人重試回傳成功（不誤報 note_taken）。
+        錯誤 token：`not_authenticated` `invalid_coordinates` `note_not_found`
+        `note_taken` `own_note` `too_far` `pickup_rate_limited`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_note_id, p_lat, p_lng]
+              properties:
+                p_note_id:
+                  type: string
+                  format: uuid
+                p_lat:
+                  $ref: "#/components/schemas/Latitude"
+                p_lng:
+                  $ref: "#/components/schemas/Longitude"
+      responses:
+        "200":
+          description: 撿到的完整便條（content 在此揭露）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+        "400":
+          $ref: "#/components/responses/BusinessError"
+        "401":
+          $ref: "#/components/responses/AuthError"
+
+  /rest/v1/rpc/my_notes:
+    post:
+      tags: [notes]
+      operationId: myNotes
+      summary: 我投放的便條（keyset 分頁）
+      description: |
+        自己投放的便條（含已被撿走的；`picked_up_at != null` ⇒ 被撿走），
+        `created_at` 新→舊。**cursor-based 分頁**：第一頁不帶游標；
+        下一頁帶上一頁最後一列的 `created_at` 與 `id`
+        （游標值必須原樣回傳伺服器給的字串，勿經 Date 轉換，避免精度損失）。
+        游標兩欄位必須成對：只帶一個 → `invalid_cursor`。
+        錯誤 token：`not_authenticated` `invalid_cursor`
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MyNotesPage"
+            examples:
+              firstPage:
+                summary: 第一頁
+                value: { p_limit: 50 }
+              nextPage:
+                summary: 下一頁（游標＝上一頁最後一列）
+                value:
+                  p_limit: 50
+                  p_before_created_at: "2026-07-12T03:21:45.123456+00:00"
+                  p_before_id: 5f8f1c1e-9a4b-4c58-a9b1-2f6d3f0f7c21
+      responses:
+        "200":
+          description: 便條列表（新→舊；空陣列＝沒有更多）
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Note"
+        "400":
+          $ref: "#/components/responses/BusinessError"
+        "401":
+          $ref: "#/components/responses/AuthError"
+
+  /rest/v1/rpc/my_collection:
+    post:
+      tags: [notes]
+      operationId: myCollection
+      summary: 我撿到的便條（keyset 分頁）
+      description: |
+        自己撿到的便條，`picked_up_at` 新→舊。分頁規則同 my_notes，
+        但游標是 `p_before_picked_at` ＋ `p_before_id`（必須成對，只帶一個 → `invalid_cursor`）。
+        `lat`/`lng` 是投放位置（第一階段不記錄撿起位置）；無作者資訊，顯示為匿名旅人。
+        錯誤 token：`not_authenticated` `invalid_cursor`
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MyCollectionPage"
+      responses:
+        "200":
+          description: 收藏列表（撿起時間新→舊；空陣列＝沒有更多）
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Note"
+        "400":
+          $ref: "#/components/responses/BusinessError"
+        "401":
+          $ref: "#/components/responses/AuthError"
+
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: apikey
+      description: Supabase publishable key（所有請求必帶）
+    Bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 匿名登入取得的 access_token
+
+  responses:
+    BusinessError:
+      description: 業務錯誤（code 恆為 P0001，message 為凍結 token）
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            code: P0001
+            message: too_far
+            details: null
+            hint: null
+    AuthError:
+      description: session 缺失/過期（非業務錯誤；client 走 session 刷新流程）
+
+  schemas:
+    Latitude:
+      type: number
+      format: double
+      minimum: -90
+      maximum: 90
+      description: WGS-84 緯度
+    Longitude:
+      type: number
+      format: double
+      minimum: -180
+      maximum: 180
+      description: WGS-84 經度
+    Timestamp:
+      type: string
+      format: date-time
+      description: UTC ISO-8601；小數秒位數可變（可能整秒無小數）
+      example: "2026-07-12T03:21:45.123456+00:00"
+
+    Note:
+      type: object
+      description: |
+        便條完整物件（drop_note / pickup_note / my_notes / my_collection 共用同一 shape）。
+        不含任何 uuid 身分欄位（author_id/picked_up_by 不上 wire）——作者一律顯示為匿名旅人。
+      required: [id, content, lat, lng, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        lat:
+          $ref: "#/components/schemas/Latitude"
+        lng:
+          $ref: "#/components/schemas/Longitude"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        picked_up_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: UTC ISO-8601（小數秒位數可變）；null ＝ 仍在地圖上
+
+    NearbyHint:
+      type: object
+      description: 探索 pin（刻意不含 content 與作者）
+      required: [id, lat, lng, distance_m, pickable, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        lat:
+          $ref: "#/components/schemas/Latitude"
+        lng:
+          $ref: "#/components/schemas/Longitude"
+        distance_m:
+          type: integer
+          description: 伺服器計算的整數公尺，client 勿自行重算
+        pickable:
+          type: boolean
+          description: 是否在撿起半徑內（呼叫當下快照，撿起時伺服器重驗）
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    MyNotesPage:
+      type: object
+      description: my_notes 分頁參數（全部可省略＝第一頁、預設 50 筆）
+      properties:
+        p_limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+        p_before_created_at:
+          allOf: [{ $ref: "#/components/schemas/Timestamp" }]
+          description: 游標：上一頁最後一列的 created_at（原樣字串）
+        p_before_id:
+          type: string
+          format: uuid
+          description: 游標：上一頁最後一列的 id（與 p_before_created_at 成對）
+
+    MyCollectionPage:
+      type: object
+      description: my_collection 分頁參數（全部可省略＝第一頁、預設 50 筆）
+      properties:
+        p_limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+        p_before_picked_at:
+          allOf: [{ $ref: "#/components/schemas/Timestamp" }]
+          description: 游標：上一頁最後一列的 picked_up_at（原樣字串）
+        p_before_id:
+          type: string
+          format: uuid
+          description: 游標：上一頁最後一列的 id（與 p_before_picked_at 成對）
+
+    Session:
+      type: object
+      description: GoTrue session（節錄常用欄位）
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: bearer
+        expires_in:
+          type: integer
+        refresh_token:
+          type: string
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            is_anonymous:
+              type: boolean
+          additionalProperties: true
+      additionalProperties: true
+
+    ApiError:
+      type: object
+      description: PostgREST 業務錯誤（iOS 以 code == "P0001" 為閘、switch message）
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: P0001
+        message:
+          type: string
+          description: 凍結的機器碼
+          enum:
+            - not_authenticated
+            - invalid_coordinates
+            - invalid_cursor
+            - content_empty
+            - content_too_long
+            - active_note_limit
+            - note_not_found
+            - note_taken
+            - own_note
+            - too_far
+            - pickup_rate_limited
+        details:
+          type: string
+          nullable: true
+        hint:
+          type: string
+          nullable: true
+
+security:
+  - ApiKey: []
+    Bearer: []

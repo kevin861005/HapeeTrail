@@ -39,6 +39,9 @@ create policy notes_select_own on public.notes
   using (author_id = (select auth.uid()) or picked_up_by = (select auth.uid()));
 
 revoke all on table public.notes from anon, authenticated;
+-- ⚠️ 此 grant 讓 authenticated 可經 PostgREST 直讀（RLS 限自己的列）——
+-- 對 public.notes 新增欄位前，先想清楚它會不會經此路徑外洩
+-- （契約揭露見 docs/api/notes.md「契約外路徑」段）。
 grant select on table public.notes to authenticated;
 
 -- ─── RPC: drop_note ───────────────────────────────────────────────────────
@@ -71,7 +74,7 @@ begin
   values (v_uid, v_content, p_lat, p_lng)
   returning * into v_row;
 
-  return to_jsonb(v_row) - 'location';
+  return to_jsonb(v_row) - 'location' - 'author_id' - 'picked_up_by';
 end;
 $$;
 
@@ -149,14 +152,14 @@ begin
      and extensions.st_dwithin(n.location, v_loc, 50.0)
   returning * into v_row;
 
-  if found then return to_jsonb(v_row) - 'location'; end if;
+  if found then return to_jsonb(v_row) - 'location' - 'author_id' - 'picked_up_by'; end if;
 
   -- 失敗診斷。此讀取相對 UPDATE 有 race，但只影響回報哪個錯誤碼，不影響獨佔正確性
   select * into v_row from public.notes n where n.id = p_note_id;
   if not found then
     raise exception 'note_not_found';
   elsif v_row.picked_up_by = v_uid then
-    return to_jsonb(v_row) - 'location';   -- 冪等重試：已是你的 = 成功
+    return to_jsonb(v_row) - 'location' - 'author_id' - 'picked_up_by';   -- 冪等重試：已是你的 = 成功
   elsif v_row.picked_up_at is not null then
     raise exception 'note_taken';
   elsif v_row.author_id = v_uid then

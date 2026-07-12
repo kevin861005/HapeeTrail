@@ -45,8 +45,9 @@ begin
   if r->>'content' <> 'hello from Tokyo' then
     raise exception 'FAIL: btrim not applied, got %', r->>'content';
   end if;
-  if not (r ?& array['id','author_id','content','lat','lng','created_at','picked_up_by','picked_up_at'])
-     or r ? 'location' then
+  -- 6 鍵 shape；uuid 身分欄位與 location 不得上 wire（T7）
+  if not (r ?& array['id','content','lat','lng','created_at','picked_up_at'])
+     or (r ?| array['location','author_id','picked_up_by']) then
     raise exception 'FAIL: unexpected JSON shape %', r;
   end if;
 end $$;
@@ -247,6 +248,82 @@ begin
   if n <> 61 then raise exception 'FAIL: rate-limit loop ran % times, expected 61', n; end if;
 end $$;
 
+-- ─── 列表 RPC：keyset 分頁 ──────────────────────────────────────────────────
+-- 注意：本測試單一 transaction，now() 恆定 ⇒ 所有 timestamp 同刻，
+-- 等於對複合游標 (ts, id) 的平手邏輯做最嚴苛的壓力測試。
 reset role;
+select pg_temp.login('00000000-0000-0000-0000-00000000000b');
+do $$
+declare
+  seen uuid[] := '{}'; page record; total int := 0; batch int;
+  last_ts timestamptz := null; last_id uuid := null;
+  prev_ts timestamptz; prev_id uuid;
+begin
+  -- B 以每頁 10 筆走完自己的 29 張：不重複、不遺漏、(created_at,id) 嚴格遞減
+  loop
+    batch := 0; prev_ts := null; prev_id := null;
+    for page in select * from public.my_notes(10, last_ts, last_id) loop
+      batch := batch + 1;
+      if page.id = any(seen) then raise exception 'FAIL: my_notes duplicate id across pages'; end if;
+      seen := seen || page.id;
+      if prev_ts is not null and (page.created_at, page.id) >= (prev_ts, prev_id) then
+        raise exception 'FAIL: my_notes order not strictly descending';
+      end if;
+      prev_ts := page.created_at; prev_id := page.id;
+    end loop;
+    exit when batch = 0;
+    total := total + batch;
+    last_ts := prev_ts; last_id := prev_id;
+  end loop;
+  if total <> 29 then raise exception 'FAIL: my_notes walked % rows, expected 29', total; end if;
+
+  -- p_limit 下界 clamp：0 → 1 筆
+  select count(*) into total from public.my_notes(0, null, null);
+  if total <> 1 then raise exception 'FAIL: my_notes p_limit clamp, got %', total; end if;
+end $$;
+
+-- 游標只帶一半 → invalid_cursor（靜默退化會掉列或重複，一律大聲失敗）
+select pg_temp.expect_error($$select * from public.my_notes(10, now(), null)$$, 'invalid_cursor');
+select pg_temp.expect_error(
+  $$select * from public.my_collection(10, null, 'deadbeef-dead-beef-dead-beefdeadbeef')$$,
+  'invalid_cursor');
+
+-- D 的收藏 60 筆全部同刻 picked_up_at：預設 limit 50 → 游標翻頁拿剩下 10、無重疊
+reset role;
+select pg_temp.login('00000000-0000-0000-0000-00000000000d');
+do $$
+declare p1 uuid[]; p2 uuid[]; c_ts timestamptz; c_id uuid; n int;
+begin
+  select array_agg(t.id), count(*) into p1, n from public.my_collection() t;
+  if n <> 50 then raise exception 'FAIL: my_collection default limit, got %', n; end if;
+
+  select t.picked_up_at, t.id into c_ts, c_id
+  from public.my_collection() t offset 49 limit 1;
+  select array_agg(t.id), count(*) into p2, n from public.my_collection(50, c_ts, c_id) t;
+  if n <> 10 then raise exception 'FAIL: my_collection page 2, got % rows', n; end if;
+  if p1 && p2 then raise exception 'FAIL: my_collection pages overlap'; end if;
+end $$;
+
+-- A 的收藏 = 1 張（hello）
+reset role;
+select pg_temp.login('00000000-0000-0000-0000-00000000000a');
+do $$
+declare n int;
+begin
+  select count(*) into n from public.my_collection();
+  if n <> 1 then raise exception 'FAIL: A my_collection expected 1, got %', n; end if;
+end $$;
+
+-- 列表 RPC 的權限面：空 claims → not_authenticated；anon → 拒絕
+reset role;
+select set_config('request.jwt.claims', '', true), set_config('role', 'authenticated', true);
+select pg_temp.expect_error($$select * from public.my_notes()$$, 'not_authenticated');
+select pg_temp.expect_error($$select * from public.my_collection()$$, 'not_authenticated');
+reset role;
+set local role anon;
+select pg_temp.expect_error($$select * from public.my_notes()$$, 'permission denied%');
+select pg_temp.expect_error($$select * from public.my_collection()$$, 'permission denied%');
+reset role;
+
 select 'ALL TESTS PASSED' as result;
 rollback;

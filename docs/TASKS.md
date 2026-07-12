@@ -17,6 +17,12 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T6** API 契約 v2：OpenAPI 化＋cursor 分頁＋EXPLAIN 索引驗證
+  ✅ 2026-07-12：`docs/api/openapi.yaml`（lint 通過）；`my_notes`/`my_collection` keyset RPC；
+  EXPLAIN 證據與 4 個 MINOR 發現處置見 `docs/tasks/archive/T6-api-contract-v2.md`；測試全綠
+- [x] **T7** Note payload 去 uuid（author_id/picked_up_by 不上 wire）
+  ✅ 2026-07-12：panel 4-0 裁定提前執行（帳號綁定後 uuid 回溯連結真人、發出的資料收不回）；
+  wire 實測 6 鍵；詳見 T6 checklist F4 段
 - [x] **T5** 推上 GitHub（kevin861005/trailstamp）＋ CLAUDE.md 新增「開發守則」章節
   ✅ 2026-07-12：CLAUDE.md §開發守則；remote origin 設定與 push（證據見 git log）
 - [x] **T1** 第一階段便條後端端到端：schema + RPC/RLS + docs/api/notes.md
