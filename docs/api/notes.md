@@ -1,7 +1,9 @@
 # Notes API（第一階段）— 契約語意文件
 
 endpoint 的權威規格（path、header、request/response schema、錯誤格式）在
-[`openapi.yaml`](openapi.yaml)——可直接 import 進 Postman。本檔講**規則與語意**，
+[`openapi.yaml`](openapi.yaml)——可直接 import 進 Postman。或直接匯入
+[`postman/`](postman/) 下的 Collection＋Environment 兩檔：依資料夾順序執行即為
+完整流程（token 由 script 自動帶入），apikey 換成自己機器 `supabase status` 的值。本檔講**規則與語意**，
 一律以 wire 層語言（HTTP／JSON／錯誤 token）陳述，附 curl 範例；
 **client 端如何實作（語言、SDK、資料型別）由 iOS 自主決定，本文件不涉入**。
 介面變更必須同步更新兩檔。

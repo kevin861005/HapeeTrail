@@ -17,6 +17,9 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T9** Postman Collection＋Environment（docs/api/postman/）
+  ✅ 2026-07-12：newman 實跑 9 requests / 9 assertions / 0 failed；
+  紀錄見 `docs/tasks/archive/T9-postman-artifacts.md`
 - [x] **T8** 契約文件語言中立化（notes.md 去 Swift、CLAUDE.md 規則同步改）
   ✅ 2026-07-12：notes.md v2.2；subagent 核對 26 條契約規則零遺失 PASS；
   紀錄見 `docs/tasks/archive/T8-language-neutral-contract.md`

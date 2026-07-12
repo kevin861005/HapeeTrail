@@ -1,0 +1,279 @@
+{
+  "info": {
+    "name": "Trailstamp Notes API",
+    "description": "第一階段便條 API。搭配 local.postman_environment.json 使用。\n\n依資料夾順序執行即為完整流程：旅人 A 留便條 → 旅人 B 發現並撿起 → 收藏。\nsignup 請求的 Tests script 會自動把 access_token 寫回 environment，不需手動貼 token。\n\n注意：apikey 只對本地 supabase（127.0.0.1）有效；夥伴機器用 `supabase status` 查自己的 key 後改 environment。\n\nwire format 權威：docs/api/openapi.yaml；語意規則：docs/api/notes.md。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0 旅人 A",
+      "item": [
+        {
+          "name": "匿名登入（A）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + access_token', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.access_token).to.be.a('string');",
+                  "  pm.environment.set('access_token', j.access_token);",
+                  "  pm.environment.set('token_a', j.access_token);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": { "raw": "{{base_url}}/auth/v1/signup", "host": ["{{base_url}}"], "path": ["auth", "v1", "signup"] }
+          }
+        },
+        {
+          "name": "drop_note 留便條",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + Note 6 鍵、無 uuid 欄位', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const n = pm.response.json();",
+                  "  pm.expect(n).to.have.all.keys('id','content','lat','lng','created_at','picked_up_at');",
+                  "  pm.environment.set('note_id', n.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 測試便條 {{$randomInt}}\",\"p_lat\":35.6595,\"p_lng\":139.7005}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/drop_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "drop_note"] }
+          }
+        },
+        {
+          "name": "my_notes 我的便條（第一頁）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + 至少一筆、含剛留的便條', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const rows = pm.response.json();",
+                  "  pm.expect(rows).to.be.an('array').with.length.of.at.least(1);",
+                  "  pm.expect(rows.map(r => r.id)).to.include(pm.environment.get('note_id'));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_limit\":50}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/my_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_notes"] }
+          }
+        },
+        {
+          "name": "my_notes 錯誤示範：游標只帶一半",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('400 + invalid_cursor', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  const e = pm.response.json();",
+                  "  pm.expect(e.code).to.eql('P0001');",
+                  "  pm.expect(e.message).to.eql('invalid_cursor');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_before_id\":\"deadbeef-dead-beef-dead-beefdeadbeef\"}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/my_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_notes"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1 旅人 B（發現並撿起）",
+      "item": [
+        {
+          "name": "匿名登入（B）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + access_token（切換為旅人 B）', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.access_token).to.be.a('string');",
+                  "  pm.environment.set('access_token', j.access_token);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": { "raw": "{{base_url}}/auth/v1/signup", "host": ["{{base_url}}"], "path": ["auth", "v1", "signup"] }
+          }
+        },
+        {
+          "name": "nearby_notes 發現附近便條",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + 看得到旅人 A 的便條且 pickable', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const hints = pm.response.json();",
+                  "  const target = hints.find(h => h.id === pm.environment.get('note_id'));",
+                  "  pm.expect(target, 'A 的便條應出現在 nearby').to.exist;",
+                  "  pm.expect(target.pickable).to.be.true;",
+                  "  pm.expect(target).to.not.have.any.keys('content','author_id');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_lat\":35.65977,\"p_lng\":139.7005}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/nearby_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "nearby_notes"] }
+          }
+        },
+        {
+          "name": "pickup_note 撿起（50m 內）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + content 在此揭露', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const n = pm.response.json();",
+                  "  pm.expect(n.id).to.eql(pm.environment.get('note_id'));",
+                  "  pm.expect(n.content).to.be.a('string');",
+                  "  pm.expect(n.picked_up_at).to.not.be.null;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":35.65977,\"p_lng\":139.7005}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/pickup_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "pickup_note"] }
+          }
+        },
+        {
+          "name": "pickup_note 再撿一次（冪等重試示範）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200（同一人重試回成功，不是 note_taken）', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.environment.get('note_id'));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":35.65977,\"p_lng\":139.7005}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/pickup_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "pickup_note"] }
+          }
+        },
+        {
+          "name": "my_collection 我的收藏",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + 撿到的便條在收藏裡', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const rows = pm.response.json();",
+                  "  pm.expect(rows.map(r => r.id)).to.include(pm.environment.get('note_id'));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/my_collection", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_collection"] }
+          }
+        }
+      ]
+    }
+  ]
+}
