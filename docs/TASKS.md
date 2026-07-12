@@ -17,6 +17,9 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T8** 契約文件語言中立化（notes.md 去 Swift、CLAUDE.md 規則同步改）
+  ✅ 2026-07-12：notes.md v2.2；subagent 核對 26 條契約規則零遺失 PASS；
+  紀錄見 `docs/tasks/archive/T8-language-neutral-contract.md`
 - [x] **T6** API 契約 v2：OpenAPI 化＋cursor 分頁＋EXPLAIN 索引驗證
   ✅ 2026-07-12：`docs/api/openapi.yaml`（lint 通過）；`my_notes`/`my_collection` keyset RPC；
   EXPLAIN 證據與 4 個 MINOR 發現處置見 `docs/tasks/archive/T6-api-contract-v2.md`；測試全綠

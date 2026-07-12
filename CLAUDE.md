@@ -25,8 +25,9 @@
 ## 協作分工
 - 我負責後端；iOS 由夥伴開發
 - docs/api/ 是 iOS 夥伴的介面契約：每個 RPC／endpoint 的
-  參數、回傳 JSON、錯誤碼，附 supabase-swift 呼叫範例；
-  介面變更必須同步更新文件
+  參數、回傳 JSON、錯誤碼，附 curl 範例；文件保持語言中立
+  ——不放任何 client 語言（Swift 等）程式碼，不替 iOS 做
+  實作決定；介面變更必須同步更新文件
 
 ## 文件地圖
 - 產品路線圖與各階段範圍：docs/roadmap.md

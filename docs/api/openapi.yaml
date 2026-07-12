@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "2.0.0"
+  version: "2.1.0"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/trailstamp
