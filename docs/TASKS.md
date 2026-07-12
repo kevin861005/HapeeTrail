@@ -17,6 +17,8 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T10** openapi servers 補 Tailscale 位址（夥伴 Swagger UI「Try it out」用）
+  ✅ 2026-07-12：mac-mini 遠端實測 Swagger UI 200＋CORS `*` 確認；lint 通過
 - [x] **T9** Postman Collection＋Environment（docs/api/postman/）
   ✅ 2026-07-12：newman 實跑 9 requests / 9 assertions / 0 failed；
   紀錄見 `docs/tasks/archive/T9-postman-artifacts.md`

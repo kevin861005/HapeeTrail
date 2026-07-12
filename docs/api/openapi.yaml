@@ -20,6 +20,8 @@ info:
 servers:
   - url: http://127.0.0.1:54321
     description: 本地開發（supabase start）
+  - url: http://kevinchenmacbook-air.tail0cb7bc.ts.net:54321
+    description: Kevin 開發機（Tailscale tailnet 內可達；夥伴選這個）
   - url: https://{project-ref}.supabase.co
     description: Hosted（T2 部署後）
     variables:
