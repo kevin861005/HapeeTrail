@@ -10,8 +10,11 @@
 
 ## 目前進度
 
-- T1（第一階段便條後端）：✅ 完成——migration 套用成功、測試腳本全綠、契約與 ADR 齊備
-  （證據見 `docs/TASKS.md` 已完成段）。iOS 夥伴可以直接照 `docs/api/notes.md` 開工。
+- T1（第一階段便條後端）＋ T6（API 契約 v2）＋ T7（payload 去 uuid）：✅ 全部完成。
+  契約現況＝**v2.1**：`docs/api/openapi.yaml`（wire format 權威、可 import Postman）＋
+  `docs/api/notes.md`（Swift 整合指南）。iOS 夥伴照這兩份開工。
+- 5 支 RPC：drop_note / nearby_notes / pickup_note / my_notes / my_collection
+  （列表 keyset 分頁、Note 統一 6 鍵 shape、11 個凍結錯誤 token）。
 
 ## 接下來要做
 
@@ -19,6 +22,9 @@
 
 ## 近期變更
 
+- 2026-07-12（cli）：T6/T7——openapi.yaml、my_notes/my_collection keyset RPC、
+  Note 去 uuid、invalid_cursor 防呆；4 個 MINOR 發現經 panel 仲裁處置
+  （紀錄：`docs/tasks/archive/T6-api-contract-v2.md`）。
 - 2026-07-12（cli）：專案初始化（git、supabase）；T1 全部產出；ADR-0001~0003。
 
 ## 雷區
@@ -31,6 +37,9 @@
   逐支 `REVOKE ... FROM public, anon`（Supabase 預設 auto-grant）。
 - 部署 hosted 前確認 PostGIS 在 `extensions` schema：
   `select extnamespace::regnamespace from pg_extension where extname='postgis'`。
+- **Note payload 禁 uuid**：`author_id`/`picked_up_by` 不上 wire（T7，測試有斷言）；
+  新增回傳欄位前先過這條。列表 RPC 是 SECURITY INVOKER——別對 `public.notes`
+  做欄位級 grant（INVOKER 的 WHERE 讀 author_id/picked_up_by 會 permission denied，已實測）。
 
 ## 最後更新
 
