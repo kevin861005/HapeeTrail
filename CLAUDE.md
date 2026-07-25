@@ -61,10 +61,12 @@
 - 但禁止過度設計：MVP 用不到的 cache、queue、microservice
   不要引入；認為必要時提出討論，不要直接做
 
-### Checklist 紀律
-- 每個任務開始前，把計畫寫成 checklist 存到 docs/tasks/
-  （如 sprint-1.md）；不要只放在對話裡，session 結束會消失
-- 只做 checklist 上的項目。過程中發現的新需求或必要項目，
-  一律先停下來與我討論，同意後才排入 checklist
-- 每完成一項就標記 - [x] 並簡注結果，方便日後追蹤
-- 嚴禁「順手做」：不在清單上的改動不做，避免範圍發散
+### Ticket 紀律
+- 每個任務開始前，規劃走 Matt 流程（/to-spec → /to-tickets）；
+  tickets 棲息地依 skill 而定（tracker 或 .scratch/<feature>/issues/），
+  不要只放在對話裡，session 結束會消失
+- docs/tasks/ 既有的 checklist 一律視為 legacy 施工紀錄，僅供查閱
+- 只做 ticket 上的項目。過程中發現的新需求或必要項目，
+  一律先停下來與我討論，同意後才立新 ticket
+- 每完成一張 ticket 就標記完成並簡注結果，方便日後追蹤
+- 嚴禁「順手做」：沒有 ticket 的改動不做，避免範圍發散
