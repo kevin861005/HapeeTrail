@@ -54,7 +54,8 @@ create function pg_temp.fixture_users() returns uuid[] language sql immutable as
     '00000000-0000-0000-0000-00000000000c',  -- C：50 張上限測試
     '00000000-0000-0000-0000-00000000000d',  -- D：60 次/時上限測試
     '00000000-0000-0000-0000-00000000000e',  -- E：style 代號測試
-    '00000000-0000-0000-0000-00000000000f'   -- F：私人便條測試
+    '00000000-0000-0000-0000-00000000000f',  -- F：私人便條測試
+    '00000000-0000-0000-0000-000000000010'   -- G：私人便條絕對上限測試
   ]::uuid[]
 $fn$;
 
@@ -89,8 +90,8 @@ select set_config('test.lat', (random() * 115 - 60)::text, true),   -- 緯度帶
 -- 位移只動緯度：每度的公尺數不隨經度改變（110,574–111,412m／度，帶內差 0.76%），
 -- 隨機地點才能沿用下面手算的距離：30m ≈ 0.00027039、70m ≈ 0.00063090、130m ≈ 0.00117167。
 -- 各使用者的便條群以「整數度」隔開（1 度 ≈ 111km ≫ 100m 探索半徑）⇒ 群組間永遠互不可見，
--- 這是不變式而不是機率：0 主群／2 私人（F）／4 樣式（E）／6 上限（C）／8 頻率（D）。
--- 最大位移 8 ＋ 基準上界 55 ＝ 63 度，離 ±90 還很遠。
+-- 這是不變式而不是機率：0 主群／2 私人（F）／4 樣式（E）／6 上限（C）／8 頻率（D）／
+-- 10 私人上限（G）。最大位移 10 ＋ 基準上界 55 ＝ 65 度，離 ±90 還很遠。
 create function pg_temp.tlat(d float8 default 0) returns float8
 language sql stable as $fn$ select current_setting('test.lat')::float8 + d $fn$;
 create function pg_temp.tlng() returns float8
@@ -565,6 +566,29 @@ end $$;
 reset role;
 update public.notes set picked_up_at = picked_up_at + interval '17 minutes'
  where id = (string_to_array(current_setting('test.rl_ids'), ',')::uuid[])[1];
+
+-- G：私人便條的絕對上限（T13）。旅遊紀錄不佔未撿額度、也永遠不會被撿走，
+-- 於是在此之前單一帳號可以無限累積——上限擋的是這個，不是防定向攻擊
+-- （匿名註冊無限量，換帳號就繞過，同 ADR-0003 的 advisory 立場）。
+reset role;
+insert into public.notes (author_id, content, lat, lng, audience)
+select '00000000-0000-0000-0000-000000000010', 'g journal ' || g,
+       pg_temp.tlat(10), pg_temp.tlng(), 'self'
+from generate_series(1, 4999) g;
+select pg_temp.login('00000000-0000-0000-0000-000000000010');
+do $$
+declare glat float8 := pg_temp.tlat(10);
+        glng float8 := pg_temp.tlng();
+begin
+  -- 第 5000 張還在額度內
+  perform public.drop_note('g journal 5000', glat, glng, p_audience => 'self');
+  -- 第 5001 張被擋，且附上限數字（旅人才知道發生什麼事）
+  perform pg_temp.expect_error(
+    format($q$select public.drop_note('over', %s, %s, p_audience => 'self')$q$, glat, glng),
+    'private_note_limit', '{"maxPrivateNotes": 5000}');
+  -- 兩個閘門各管各的：私人滿了不影響公開便條
+  perform public.drop_note('g public', glat, glng);
+end $$;
 
 -- ─── 列表 RPC：envelope ＋ 不透明游標 ───────────────────────────────────────
 -- 注意：本測試單一 transaction，now() 恆定 ⇒ 所有 timestamp 同刻，

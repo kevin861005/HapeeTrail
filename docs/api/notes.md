@@ -105,7 +105,8 @@ curl -X POST "$BASE/auth/v1/signup" -H "apikey: $KEY" \
 | 別人 pickup_note | 走進 50m 可撿走 | **`note_not_found`** |
 | 自己的 my_notes | 出現 | 出現 |
 | my_collection | 撿到才出現 | 永遠不會出現（撿不走） |
-| 未撿便條上限 50 張 | 計入且受限 | **不計入、也不受限** |
+| 未撿便條上限 50 張（`active_note_limit`） | 計入且受限 | **不計入、也不受限** |
+| 旅遊紀錄上限 5000 張（`private_note_limit`） | 不計入 | 計入且受限 |
 
 - 私人便條對外人的回應與**不存在的便條完全相同**（`note_not_found`）——刻意不另設
   「這是私人便條」的錯誤，那等於向外人確認該座標存在一張他看不到的便條。
@@ -129,8 +130,10 @@ curl -X POST "$BASE/rest/v1/rpc/drop_note" -H "apikey: $KEY" \
   具體項目——不是一個「代表預設」的抽象槽）。兩者各自獨立，可以只給其中一個。
 - `p_audience` **可省略**（或給 null），此時為 `anyone`。不認得的值 → `invalid_audience`。
 - 回傳的 `content` 是伺服器 trim 後的正規版本，**client 應以它取代本地草稿**。
-- 每人未撿的**公開**便條上限 50 張（`active_note_limit`）。旅遊紀錄不計入此上限，
-  也不受它擋下——公開便條滿了仍可繼續記錄旅程。
+- **兩個上限各管各的**：未撿的**公開**便條上限 50 張（`active_note_limit`）；
+  旅遊紀錄上限 5000 張（`private_note_limit`）。公開便條的額度算「未撿的」，被撿走就釋放；
+  旅遊紀錄永遠不會被撿走，所以它的額度是絕對總量。兩者互不影響——公開便條滿了仍可繼續
+  記錄旅程，旅遊紀錄滿了也不影響留公開便條。5000 張約等於每天寫一張寫 13 年。
 
 ## 5. nearby_notes — 100m 提示
 
@@ -214,7 +217,8 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 | `content_empty` / `content_too_long` | drop | 表單行內提示（1–500 code point） |
 | `invalid_style_code` | drop | client bug，修 payload（代號須落在 1–32767） |
 | `invalid_audience` | drop | client bug，修 payload（只認得 `anyone`／`self`） |
-| `active_note_limit` | drop | 「等便條被撿走再留」（上限 50 張未撿的公開便條；旅遊紀錄不受限） |
+| `active_note_limit` | drop | 「等便條被撿走再留」（上限 50 張未撿的公開便條） |
+| `private_note_limit` | drop | 旅遊紀錄已達 5000 張的絕對上限（與公開便條的額度互不影響） |
 | `note_not_found` | pickup | 移除 pin、刷新（別人的旅遊紀錄也回這個） |
 | `note_taken` | pickup | 「有人搶先一步」、移除 pin |
 | `own_note` | pickup | UI 正常不會觸發（nearby 不含自己的） |
@@ -229,6 +233,7 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 | `too_far` | `{"distanceM": 87}` | 「還差 87 公尺」——伺服器當下算的，不是上次探索的估計值 |
 | `content_too_long` | `{"maxChars": 500}` | 告訴使用者要刪掉多少字 |
 | `active_note_limit` | `{"maxActiveNotes": 50}` | 說明為什麼不能再留 |
+| `private_note_limit` | `{"maxPrivateNotes": 5000}` | 同上，旅遊紀錄那一側 |
 | `pickup_rate_limited` | `{"retryAfterS": 1800}` | 大概要等多久，不必盲目重試 |
 
 新增鍵、或讓更多 token 附帶 `details`，皆為非破壞性變更。
@@ -276,6 +281,10 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 
 ## 11. Changelog
 
+- 2026-07-28 **v3.1**：旅遊紀錄新增絕對上限 5000 張與 `private_note_limit` token
+  （附 `{"maxPrivateNotes": 5000}`）。在此之前旅遊紀錄完全沒有數量閘門——它不佔未撿額度、
+  也永遠不會被撿走，於是單一帳號可以無限累積。**新增 token 為非破壞性變更**（依 §9，
+  未知 token 走通用錯誤路徑即可），其餘契約未動。
 - 2026-07-28（**非契約變更**，故不跳版號）：**資料表的直讀路徑整個關閉**
   （`GET /rest/v1/notes` 由「RLS 限自己的列」變成一律 403），內部 helper 也全部收回執行權。
   在此之前，便條作者直讀自己那一列即可取得 `picked_up_by` ＝ 撿走它的人的 `auth.users.id`

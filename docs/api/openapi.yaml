@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "3.0.0"
+  version: "3.1.0"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/trailstamp
@@ -74,6 +74,7 @@ paths:
         `p_audience` 可省略，省略時為 `anyone`（給任何人撿）。
         錯誤 token：`not_authenticated` `invalid_coordinates` `content_empty`
         `content_too_long` `invalid_style_code` `invalid_audience` `active_note_limit`
+        `private_note_limit`
       requestBody:
         required: true
         content:
@@ -343,7 +344,8 @@ components:
         它不是純呈現，因此不認得的值會被拒絕（`invalid_audience`）而不是走預設。
         - `anyone`：任何人走進 50m 都能撿走；會出現在別人的探索結果中。
         - `self`：只給自己的旅遊紀錄。不出現在任何人的探索結果中（含作者自己）、
-          任何人都撿不走（別人拿到 `note_not_found`）、也不佔用未撿便條的數量上限。
+          任何人都撿不走（別人拿到 `note_not_found`）、也不佔用未撿便條的數量上限；
+          另有自己的絕對上限 5000 張（`private_note_limit`），與公開便條的額度互不影響。
     Coordinate:
       type: object
       description: WGS-84 座標（回應端一律巢狀物件；請求端維持兩個扁平參數）
@@ -514,6 +516,7 @@ components:
             - invalid_style_code
             - invalid_audience
             - active_note_limit
+            - private_note_limit
             - note_not_found
             - note_taken
             - own_note
@@ -531,6 +534,7 @@ components:
             `too_far` → `{"distanceM": 87}`（伺服器當下算出的實際距離，公尺；與 NearbyHint 的
             `distanceM` 同一算法）；`content_too_long` → `{"maxChars": 500}`（Unicode code point）；
             `active_note_limit` → `{"maxActiveNotes": 50}`（未撿**公開**便條的數量上限）；
+            `private_note_limit` → `{"maxPrivateNotes": 5000}`（旅遊紀錄的絕對總量上限）；
             `pickup_rate_limited` → `{"retryAfterS": 1800}`（建議重試的秒數）。
             其餘 token 的 `details` 為 null。新增鍵、或讓更多 token 附帶 `details`，
             皆為非破壞性變更。

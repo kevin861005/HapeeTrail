@@ -7,9 +7,6 @@
 （無）
 
 ## 待辦
-- [ ] **T13** 私人便條無數量閘門（安全複核 MAJOR）——實測單帳號連建 200 張全成功，
-  之後仍可留滿 50 張公開便條。spec 明文接受此天花板，但其論證支持的是「更高的上限」
-  而非「沒有上限」；補一個寬鬆的絕對上限即可關掉
 - [ ] **T16** `btrim` 只吃 ASCII 空白（正確性複核 MINOR）——`E'\t\n'` 與全角空格 U+3000
   可建立便條，只有半角空白被 `content_empty` 擋。spec 未規定，但 CJK 使用者按到全角空白不罕見
 - [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
@@ -21,6 +18,26 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T13** 私人便條無數量閘門（安全複核 MAJOR）
+  ✅ 2026-07-28：`supabase/migrations/20260728090000_private_note_limit.sql`；
+  旅遊紀錄絕對上限 **5000 張**（≈ 每天寫一張寫 13 年）＋ 新 token `private_note_limit`
+  附 `{"maxPrivateNotes": 5000}`。兩個閘門刻意分開：公開便條算「未撿的」（被撿走就釋放），
+  旅遊紀錄永遠不會被撿走所以只能是絕對總量；合成一個會讓「公開滿了就不能再記錄旅程」，
+  那正是 ADR-0006 要避免的事。決策記為 **ADR-0008**。
+  `drop_note` 逐行比對確認只有上限那一段改動，其餘驗證／insert／回傳逐字未變。
+  三份契約產出同步（openapi `info.version` 3.0.0→3.1.0、enum 加 token、notes.md §3/§4/§8）；
+  token 三方交叉比對逐字一致。
+  獨立正確性驗證 **PASS**：邊界精確（5000 放行／5001 擋／刪一張後恰好再放一格）、
+  兩個閘門互不影響、計數是每人而非全域、既有 8 類驗證與回傳形狀全部未變。
+  **併發超越量已量化**：≈ 同時在途的請求數（20 條連線 → 5019、40 條 → 5034）；
+  既有的 `active_note_limit` 同一手法是 50 → 65，同級同類，符合 advisory 定位（寫進 ADR）。
+  code-review 抓到並修正一個我寫錯的事實：索引理由原本寫「沒有它會 Seq Scan」——
+  那只在單一作者佔全表近 100% 的退化分佈下成立（我的測試正是那樣），真實分佈下
+  planner 仍走 `notes_author_ix`。實測重寫成穩態數字：VACUUM 後有索引是 Index Only Scan
+  7 buffers / `Heap Fetches: 0` / 0.36ms，沒有是 Bitmap Heap Scan 97 buffers / 0.71ms。
+  我另外查證後**沒有照抄**複核者的一個說法：ADR-0006 並未主張「私人便條不受任何上限」，
+  它只說不計入未撿額度（那句仍成立）——真正主張「沒有上限」的是 drop_note 舊註解與
+  notes.md §3 對照表。ADR-0008 因此寫成「補上 0006 沉默處」而非「推翻 0006」
 - [x] **T12** 撿起者 uuid 經直讀路徑外洩給便條作者（安全複核 MAJOR）
   ✅ 2026-07-28：`supabase/migrations/20260728080000_close_direct_read.sql`；
   兩支列表 RPC 改 SECURITY DEFINER（各只動 3 行，機械 diff 確認函式邏輯零改動），
