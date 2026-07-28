@@ -20,9 +20,6 @@
   下次跑測試就爆 `FAIL: own notes appeared in nearby`，訊息還把人導向「私人便條／自己的便條
   過濾壞了」這個錯方向。T14 只搬走了 collection 這個污染源，測試本身沒硬化。
   修法方向：斷言改成只看本次測試建立的 id，而不是「陣列必須為空」
-- [ ] **T15** 撿取頻率閘門蓋掉冪等重試（正確性複核 MINOR）——閘門排在冪等診斷之前
-  （`20260728060000_distance_helper.sql:100-108`），撿滿 60 次後對自己已撿到的那張重試會得
-  `pickup_rate_limited`，與 `notes.md` §6「timeout 後可安心重試同一筆」不符
 - [ ] **T16** `btrim` 只吃 ASCII 空白（正確性複核 MINOR）——`E'\t\n'` 與全角空格 U+3000
   可建立便條，只有半角空白被 `content_empty` 擋。spec 未規定，但 CJK 使用者按到全角空白不罕見
 - [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
@@ -34,6 +31,20 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T15** 撿取頻率閘門蓋掉冪等重試（正確性複核 MINOR）
+  ✅ 2026-07-28：`supabase/migrations/20260728070000_idempotent_retry_under_rate_limit.sql`；
+  閘門跳起來時先問一句「這張是不是已經是你的」，是就照常回成功——冪等重試不新增任何撿取，
+  本來就不該計入防濫用額度。函式本體對前一版只多 **4 行**（機械 diff 確認其餘 63 行 byte-for-byte
+  相同），新查詢只在閘門真的跳起時才跑、走 PK，happy path 零成本。
+  red：`pickup_rate_limited`；green：回傳原便條且 `pickedUpAt` 未被改寫。
+  測試把第一次撿取回撥 17 分鐘才驗得出「沒被改寫」（單一交易內 now() 恆定，不回撥兩者長得一樣），
+  順帶讓 `retryAfterS` 從恆定的 3600 變成算出來的 2580；**突變測試證明斷言是實心的**
+  （換成會改寫的版本 → `FAIL: 冪等重試改寫了 pickedUpAt: was 11:26:04, got 11:43:04`）。
+  斷言完會還原時間戳，否則下方「D 的收藏 60 筆全部同刻」的前提會被悄悄弄壞。
+  `ALL TESTS PASSED`、newman 15/15、redocly lint 通過。契約文件不動——notes.md §6 本來就是
+  無條件承諾，是實作沒跟上文件。code-review 兩軸 0 項硬性違規；Standards 軸另否決了一個
+  看似更乾淨的修法（讓閘門 fall through 到診斷段共用冪等分支會使 `too_far` 在限流下照樣回傳，
+  等於把距離探測 oracle 開在閘門後面，拆掉 ADR-0003 要擋的座標掃描）
 - [x] **T14** Postman collection 累積 committed 資料導致假性失敗（正確性複核 MAJOR）
   ✅ 2026-07-28：`docs/api/postman/`——每輪由「匿名登入（A）」的 Pre-request script 隨機挑地點，
   位移一律只動緯度（每度公尺數不隨經度改變）；API 沒有刪除便條的路徑，所以只能靠換地點。

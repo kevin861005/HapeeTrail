@@ -435,6 +435,43 @@ begin
   if n <> 61 then raise exception 'FAIL: rate-limit loop ran % times, expected 61', n; end if;
 end $$;
 
+-- D 此刻正被閘門擋著。對「自己已經撿到的那張」重試仍須成功——冪等重試不新增任何撿取，
+-- 擋下它等於在旅人撿得最勤的時候，收回 notes.md §6「timeout 後可安心重試同一筆」的承諾。
+-- 同時確認閘門沒有因此被整個關掉：真正新的撿取照樣擋。
+--
+-- 先把第一次撿取回撥 17 分鐘：單一 transaction 內 now() 恆定，不回撥就分不出
+-- 「重試回的是原本的 pickedUpAt」還是「被重新寫成當下時間」——兩者長得一模一樣。
+-- 回撥後窗內仍有 60 次 ⇒ 閘門照樣跳，且建議秒數變成算出來的 3600−1020＝2580
+-- （上一段在 now() 恆定下只驗得到整個窗長 3600，驗不到它是算的還是寫死的）。
+-- 斷言完會還原，否則下方「D 的收藏 60 筆全部同刻」那段的前提會被這裡悄悄弄壞。
+reset role;
+update public.notes set picked_up_at = picked_up_at - interval '17 minutes'
+ where id = (string_to_array(current_setting('test.rl_ids'), ',')::uuid[])[1];
+select set_config('test.rl_first_at',
+  (select picked_up_at::text from public.notes
+    where id = (string_to_array(current_setting('test.rl_ids'), ',')::uuid[])[1]), true);
+select pg_temp.login('00000000-0000-0000-0000-00000000000d');
+do $$
+declare v_ids uuid[] := string_to_array(current_setting('test.rl_ids'), ',')::uuid[];
+        v_was timestamptz := current_setting('test.rl_first_at')::timestamptz;
+        r jsonb;
+begin
+  r := public.pickup_note(v_ids[1], 36.0, 135.0);
+  if r->>'id' <> v_ids[1]::text then
+    raise exception 'FAIL: 頻率閘門下的冪等重試沒回原便條, got %', r;
+  end if;
+  if r->>'pickedUpAt' <> public.as_wire_ts(v_was) then
+    raise exception 'FAIL: 冪等重試改寫了 pickedUpAt: was %, got %',
+      public.as_wire_ts(v_was), r->>'pickedUpAt';
+  end if;
+  perform pg_temp.expect_error(
+    format($q$select public.pickup_note('%s', 36.0, 135.0)$q$, v_ids[61]), 'pickup_rate_limited',
+    '{"retryAfterS": 2580}');
+end $$;
+reset role;
+update public.notes set picked_up_at = picked_up_at + interval '17 minutes'
+ where id = (string_to_array(current_setting('test.rl_ids'), ',')::uuid[])[1];
+
 -- ─── 列表 RPC：envelope ＋ 不透明游標 ───────────────────────────────────────
 -- 注意：本測試單一 transaction，now() 恆定 ⇒ 所有 timestamp 同刻，
 -- 等於對複合游標 (ts, id) 的平手邏輯做最嚴苛的壓力測試。
