@@ -4,9 +4,46 @@
 
 ## 進行中
 
-- [ ] **T11** API 契約 v3（`color`/`style`/`audience`、不透明游標、錯誤 details、JSON 白名單）
-  ——spec：`.scratch/api-contract-v3/spec.md`；tickets：`.scratch/api-contract-v3/issues/`（7 張，01→07）；
-  設計理由：`docs/tasks/T11-contract-v3-design.md`
+（無）
+
+## 待辦
+- [ ] **T12** 撿起者 uuid 經直讀路徑外洩給便條作者（安全複核 MAJOR）
+  ——RLS `author_id = uid OR picked_up_by = uid` ＋ 表有 SELECT grant，作者直讀自己的便條
+  即取得撿走它的人的 `auth.users.id`。非 T11 引入（2026-07-12 結構性取捨）、`notes.md` §10 有揭露，
+  但 T7 移除 uuid 的理由對這條路徑同樣成立。**須先決定要不要收**（欄位級 grant 曾因 INVOKER
+  函式的 WHERE 撞權限而否決，見 `20260712010000_my_lists.sql:83-85`）
+- [ ] **T13** 私人便條無數量閘門（安全複核 MAJOR）——實測單帳號連建 200 張全成功，
+  之後仍可留滿 50 張公開便條。spec 明文接受此天花板，但其論證支持的是「更高的上限」
+  而非「沒有上限」；補一個寬鬆的絕對上限即可關掉
+- [ ] **T14** Postman collection 累積 committed 資料，約第 11 輪起假性失敗（正確性複核 MAJOR）
+  ——每輪留兩張便條從不清理，而 `nearby_notes` 只回最近 20 筆，殘留的 19m 便條會把本輪目標
+  擠出前 20 名；失敗看起來像後端 bug。同一根因也讓 `notes.test.sql` 在未 reset 的資料庫上失敗。
+  併修：collection 對私人便條零覆蓋（無 `self`／無他人撿私人便條／無 `invalid_audience`），
+  而 `notes.md` 對 iOS 宣稱「依資料夾順序執行即為完整流程」
+- [ ] **T15** 撿取頻率閘門蓋掉冪等重試（正確性複核 MINOR）——閘門排在冪等診斷之前
+  （`20260728060000_distance_helper.sql:100-108`），撿滿 60 次後對自己已撿到的那張重試會得
+  `pickup_rate_limited`，與 `notes.md` §6「timeout 後可安心重試同一筆」不符
+- [ ] **T16** `btrim` 只吃 ASCII 空白（正確性複核 MINOR）——`E'\t\n'` 與全角空格 U+3000
+  可建立便條，只有半角空白被 `content_empty` 擋。spec 未規定，但 CJK 使用者按到全角空白不罕見
+- [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
+  ——等什麼：進入大量測試階段（2026-07-12 決定：開發期以本機 supabase 為主）
+- [ ] **T3** UGC 檢舉機制（App Store 審查前必須；`report_note` RPC + 隱藏 flag）
+- [ ] **T4** 便條 TTL 政策（產品決策；技術上為 pg_cron 一句 delete）
+
+## 已完成
+
+（30 天內；更舊直接刪，git 歷史即檔案）
+
+- [x] **T11** API 契約 v3（`color`/`style`/`audience`、不透明游標、錯誤 details、JSON 白名單）
+  ✅ 2026-07-28：8 張 ticket 全數完成（`.scratch/api-contract-v3/`，spec ＋ issues 01→08 各附證據）；
+  6 支 migration（`20260728000000`～`20260728060000`）；契約三份產出同步改寫
+  ＋ 新增 `docs/api/style-codes.md`；設計結論升級為 ADR-0004／0005／0006，
+  設計草案搬 `docs/tasks/archive/T11-contract-v3-design.md`。
+  交付驗收（07）：乾淨資料庫下 `ALL TESTS PASSED`、newman 12/12、redocly lint 通過；
+  兩份獨立複核**皆 PASS**——安全審查六軸無一被攻破（含以 `pg_proc` ＋ 權限查詢確認
+  `authenticated` 可執行的 9 支函式與 §10 揭露逐一相符），正確性驗證實作層 8/8 全綠
+  （含 10 連線同搶一張 → 1 成功 / 9 `note_taken`、143 張同刻便條 × 11 種頁大小翻頁不掉列）。
+  兩複核 ＋ code-review 兩軸共修掉 8 項文件缺陷，未修者已登記為 T12–T16（證據見 ticket 07 文末）
   - 01 白名單建構 ✅ 2026-07-28：`supabase/migrations/20260728000000_whitelist_json.sql`；
     既有測試套件未改仍 `ALL TESTS PASSED`、newman 9/9、暫時欄位探針證明不外洩（證據見 ticket 01）
   - 02 wire 格式 v3 ✅ 2026-07-28：`supabase/migrations/20260728010000_wire_format_v3.sql`；
@@ -41,19 +78,8 @@
     既有斷言未改仍 `ALL TESTS PASSED`、newman 12/12、EXPLAIN 索引與變更前逐字相同。
     留下一個已量化的天花板：空 `search_path` 使 planner 無法 inline，每候選列多約 1.3–1.7µs
     （MVP 規模約 0.1ms）——升級路徑寫在 migration 的 `ponytail:` 註解（證據見 ticket 08）
-  - 下一步：對 07 跑 `/implement`（需知：未知值政策必須把 `audience` 排除在外，見 ticket 05；
-    契約外路徑要揭露的是 `as_note_wire`／`as_wire_ts`／`as_cursor`／`parse_cursor` 四支，
-    `distance_m` 不在內——理由見 ticket 08）
-
-## 待辦
-- [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
-  ——等什麼：進入大量測試階段（2026-07-12 決定：開發期以本機 supabase 為主）
-- [ ] **T3** UGC 檢舉機制（App Store 審查前必須；`report_note` RPC + 隱藏 flag）
-- [ ] **T4** 便條 TTL 政策（產品決策；技術上為 pg_cron 一句 delete）
-
-## 已完成
-
-（30 天內；更舊直接刪，git 歷史即檔案）
+  - 07 交付驗收 ✅ 2026-07-28：`docs/api/style-codes.md`（新）、`notes.md` §9 未知值政策
+    ＋ §10 契約外路徑完整揭露、ADR-0004～0006、設計檔歸檔（證據見 ticket 07 文末）
 
 - [x] **T10** openapi servers 補 Tailscale 位址（夥伴 Swagger UI「Try it out」用）
   ✅ 2026-07-12：mac-mini 遠端實測 Swagger UI 200＋CORS `*` 確認；lint 通過

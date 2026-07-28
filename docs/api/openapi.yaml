@@ -40,7 +40,7 @@ paths:
       operationId: signInAnonymously
       summary: 匿名登入（取得 session）
       description: |
-        body 給空物件 `{}` 即為匿名註冊（等同 supabase-swift 的 `signInAnonymously()`）。
+        body 給空物件 `{}` 即為匿名註冊（等同各語言 SDK 的 `signInAnonymously`）。
         回傳的 `access_token` 用於後續所有請求的 Bearer。
         ⚠️ 只在沒有既存 session 時呼叫——重複呼叫會鑄新 user id，孤兒化舊資料。
       security:
@@ -333,6 +333,8 @@ components:
         後端也因此不驗證代號是否存在於對照表——超出對照表範圍的值會被接受、原樣儲存、原樣回傳。
         **client 遇到未知代號一律渲染預設樣式**，不得視為錯誤。
         伺服器只做範圍粗檢，1–32767 之外 → `invalid_style_code`。
+        對照表的文件版在 `style-codes.md`（與本檔同目錄，由 iOS 維護；
+        開頭的「代號是永久 ID，不是清單位置」硬性約定務必先讀）。
     Audience:
       type: string
       enum: [anyone, self]
@@ -442,6 +444,9 @@ components:
           minimum: 1
           maximum: 100
           default: 50
+          description: |
+            每頁筆數。**越界不報錯，伺服器靜默夾到 1–100**（`0`／負數 → 1，`101` 以上 → 100）；
+            此處的 min/max 是給 client 端預檢用的，不是伺服器的拒絕條件。
         p_cursor:
           allOf: [{ $ref: "#/components/schemas/Cursor" }]
           description: 上一頁回傳的 nextCursor，原樣放進來即為下一頁；省略或 null ＝ 第一頁

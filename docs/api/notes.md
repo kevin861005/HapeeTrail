@@ -6,7 +6,10 @@ endpoint 的權威規格（path、header、request/response schema、錯誤格�
 完整流程（token 由 script 自動帶入），apikey 換成自己機器 `supabase status` 的值。本檔講**規則與語意**，
 一律以 wire 層語言（HTTP／JSON／錯誤 token）陳述，附 curl 範例；
 **client 端如何實作（語言、SDK、資料型別）由 iOS 自主決定，本文件不涉入**。
-介面變更必須同步更新兩檔。
+**契約產出共三份**：本檔（語意）、[`openapi.yaml`](openapi.yaml)（wire format 的權威）、
+[`postman/`](postman/)（可執行範例）。任何介面變更三份必須同步更新。
+`color`／`style` 的對照表另見 [`style-codes.md`](style-codes.md)——它**由 iOS 維護**，
+後端不實作、不驗證、不做同步檢查，因此不在上述同步義務內。
 
 共同約定：
 
@@ -83,10 +86,12 @@ curl -X POST "$BASE/auth/v1/signup" -H "apikey: $KEY" \
 **`color`／`style` 代號**（兩者各自獨立、從 1 起算的小整數）：
 
 - 色票與卡片樣式的**對照表在裝置端**，後端只儲存代號、不理解其語意——新增顏色或樣式
-  不需要後端 migration 或發版。
+  不需要後端 migration 或發版。對照表的文件版在 [`style-codes.md`](style-codes.md)
+  （由 iOS 維護；**開頭的「代號是永久 ID」硬性約定務必先讀**——違反會讓所有既有便條
+  靜默換色，且兩側都不會有任何錯誤訊號）。
 - 因此後端**不驗證代號是否存在於對照表**：對照表裡沒有的代號照樣被接受、原樣儲存、
   原樣回傳，且不會有任何錯誤訊號。**client 遇到未知代號一律渲染預設樣式**，
-  不得視為錯誤或顯示破圖。
+  不得視為錯誤或顯示破圖（§9）。
 - 後端只做**範圍**粗檢：1–32767 以外的整數 → `invalid_style_code`（§8）。
   非整數（`1.5`）或超出 32 位元整數的值屬**型別**錯誤，與其他參數同一模式
   （如 `p_lat` 給字串），落在 §2 的第二層閘門，不是 `P0001`。
@@ -171,7 +176,8 @@ curl -X POST "$BASE/rest/v1/rpc/pickup_note" -H "apikey: $KEY" \
 ```
 
 排序：my_notes 依 `createdAt` 新→舊、my_collection 依 `pickedUpAt` 新→舊。
-每頁預設 50、上限 100。my_notes 含公開便條與旅遊紀錄兩者，以 `audience` 分辨；
+每頁預設 50、上限 100（`p_limit` 越界**不報錯，伺服器靜默夾到 1–100**）。
+my_notes 含公開便條與旅遊紀錄兩者，以 `audience` 分辨；
 my_collection 的 `audience` 恆為 `anyone`。翻頁規則：
 
 - 第一頁：不帶 `p_cursor`（或給 null）。
@@ -227,19 +233,74 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 
 新增鍵、或讓更多 token 附帶 `details`，皆為非破壞性變更。
 
-**變更政策**：token 字串永久凍結；新增為非破壞性（未知碼走 default），
-改名／刪除為破壞性變更，須同步更新 openapi.yaml＋本檔並取得 iOS 簽核。
+**變更政策**：token 字串**永久凍結**——一旦發布就不再改名、不再刪除。
+新增 token 為**非破壞性**變更（依 §9 未知值政策，client 走 default 分支即可）；
+改名或刪除為**破壞性**變更，須同步更新開頭列出的三份產出並取得 iOS 簽核。
+讓更多 token 附帶 `details`、或在既有 `details` 裡加鍵，同為非破壞性變更。
+本政策一體適用於契約的全部介面，不只錯誤 token。
 
-## 9. 契約外路徑（讀了也別依賴）
+## 9. 未知值政策（此後絕大多數新增都是非破壞性變更的前提）
 
-技術上 `GET /rest/v1/notes` 直讀存在（v1 曾使用），RLS 限制只能讀到自己寫的或
-自己撿的列。**它不是契約的一部分**：回傳形狀與 RPC 不同（會多出 `location` WKB
-與 `author_id`/`picked_up_by` 等契約不承載的欄位）、上限規則不同，且後端可能
-隨時收緊或收回而不另行通知。一律使用上述 RPC。
+三條規則，兩側都必須遵守：
 
-## 10. Changelog
+1. **未知欄位一律忽略。** 後端在回應中新增欄位是非破壞性變更；client 的解碼不得因為
+   多出不認得的鍵而失敗。
+2. **未知 enum 值一律走 default 分支**，不得視為錯誤。適用於 `audience`（日後可能新增值）
+   與錯誤 token（§8）——遇到不認得的 token，走通用錯誤路徑即可，不必等 app 更新。
+3. **未知代號一律渲染預設樣式。** `color`／`style` 的對照表在裝置端
+   （[`style-codes.md`](style-codes.md)），後端只存代號、不驗證它存不存在，
+   所以對照表以外的代號會原樣抵達且**沒有任何錯誤訊號**。渲染成預設外觀，不得破圖。
 
-- 2026-07-28 **v3.0**（進行中，iOS 動工前一次到位）：四個業務錯誤開始附帶 `details`
+**唯一的例外是請求端的 `p_audience`**：後端不認得的值一律拒絕（`invalid_audience`），
+不走預設。理由是它與其他欄位性質不同——後端必須理解它才能過濾，
+靜默走預設等於把使用者以為私密的便條變成公開的，而使用者不會收到任何訊號。
+其餘請求參數若日後新增 enum，一律比照此標準逐案決定：**純呈現走預設，影響可見性的拒絕。**
+
+## 10. 契約外路徑（讀了也別依賴）
+
+以下都是技術上摸得到、但**不屬於契約**的東西。列出來是為了誠實揭露「契約以外還讀得到什麼」，
+不是邀請使用；後端可能隨時收緊或收回而不另行通知。一律使用上述 RPC。
+
+- **`GET /rest/v1/notes` 直讀**（v1 曾使用）。RLS 限制只能讀到自己寫的或自己撿的列，
+  寫入面全關（POST／PATCH／DELETE 皆 403）。回傳形狀與 RPC 不同，欄位為資料表原貌的
+  12 個：`id` `author_id` `content` `lat` `lng` `location` `created_at` `picked_up_by`
+  `picked_up_at` `color` `style` `audience`——比契約多出 `author_id`、`picked_up_by`
+  兩個 uuid 身分欄位與 `location`（PostGIS WKB），時間戳是 Postgres 原生格式而非 §3 的
+  固定格式，座標是扁平的 `lat`／`lng`。上限規則也不同（RPC 的筆數上限不適用）。
+- **`as_note_wire`**：白名單化的便條形狀，兩種摸法——
+  computed column（`GET /rest/v1/notes?select=id,as_note_wire`）與
+  RPC（`POST /rest/v1/rpc/as_note_wire`）。前者 RLS 仍生效（只看得到自己寫的或自己撿的列），
+  未擴大任何讀取面——讀到的是上一條本來就讀得到的那些列，只是形狀不同；
+  後者只是把呼叫者自己餵進去的東西換個形狀吐回來，不碰資料表。
+- **`POST /rest/v1/rpc/as_wire_ts`**：時間戳格式化。純字串運算、不碰任何資料。
+- **`POST /rest/v1/rpc/as_cursor`**、**`POST /rest/v1/rpc/parse_cursor`**：游標編解碼。
+  純字串運算、不碰任何資料——`as_cursor` 只編呼叫者自己給的輸入，
+  `parse_cursor` 只解呼叫者自己手上的游標，兩者都不查表、不授予任何權限。
+  （偽造一個格式完全合法、指向別人資料的游標也讀不到東西：列表查詢的範圍由 RLS 決定，
+  游標只決定起點。）
+- **`GET /rest/v1/` 根路徑**：PostgREST 自動產生的 schema 列表。以 `authenticated`
+  呼叫會列出上述全部路徑與 `notes` 的 12 個欄位定義；`anon` 呼叫得到的是空清單
+  （只有 `/` 本身），看不到任何表或函式。
+- **上述函式多數另有 GET 形式**：凡是 STABLE 的都可以 `GET /rest/v1/rpc/{fn}?參數=…` 呼叫——
+  包含 `nearby_notes`／`my_notes`／`my_collection` 三支契約 RPC，以及四支 helper
+  （`as_note_wire`／`as_wire_ts`／`as_cursor`／`parse_cursor`）。只有 `drop_note`／`pickup_note`
+  是 VOLATILE，GET 得 405。**契約只承認 POST**——GET 形式會把座標與游標寫進 URL，
+  因而進到存取日誌與各層 proxy 的快取，請不要用。
+
+三支 helper（`as_wire_ts`／`as_cursor`／`parse_cursor`）之所以被 `authenticated` 呼叫得到，
+是因為兩支列表 RPC 是 SECURITY INVOKER、需要以呼叫者身分執行它們。它們沒有安全影響，
+但「沒有安全影響」不是從揭露清單裡漏掉的理由。
+（距離計算的 `distance_m` 不在此列——它沒有授權給任何 client 角色，
+`authenticated` 呼叫得到 403、`anon` 得到 401，也不出現在上述根路徑的清單中。）
+
+## 11. Changelog
+
+- 2026-07-28 **v3.0**（iOS 動工前一次到位）：新增 §9「未知值政策」（未知欄位忽略、
+  未知 enum 值與未知代號走預設；請求端 `p_audience` 是唯一例外，不認得即拒絕）——
+  有了它，此後絕大多數新增都是非破壞性變更。新增
+  [`style-codes.md`](style-codes.md)（`color`／`style` 對照表，由 iOS 維護，
+  後端不驗證、不同步檢查，不在三份契約產出的同步義務內）。「契約外路徑」段（改編為 §10）補上四支
+  `authenticated` 摸得到但不屬於契約的函式。以下為本版的 wire 變更：四個業務錯誤開始附帶 `details`
   （`too_far` 附真實距離、`content_too_long` 附字數上限、`active_note_limit` 附便條數上限、
   `pickup_rate_limited` 附建議重試秒數；其餘為 null）——`details` 是**內容為 JSON 的字串**，
   需二次解析。隨之消失的規則：「`too_far` 不附距離、不得解析錯誤字串取數字」。
