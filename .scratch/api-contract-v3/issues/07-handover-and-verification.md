@@ -17,6 +17,11 @@
       可經 PostgREST 以 `notes?select=…,as_note_wire` 取得白名單化的便條形狀。RLS 仍生效（只看得到
       自己寫的或自己撿的列）、anon 不可達，未擴大讀取面；但既然該段的用途就是揭露契約以外讀得到什麼，
       它必須被列出來。若 T11-02～06 又新增類似的 computed column，一併補上
+- [ ] 同段一併補上 T11-03 引入的 `as_cursor(timestamptz, uuid)` 與 `parse_cursor(text)`：與 `as_wire_ts`
+      同性質——因兩支 SECURITY INVOKER 列表 RPC 需要而授權給 `authenticated`，於是也成為
+      `POST /rest/v1/rpc/{fn}` 呼叫得到的東西。兩支皆純字串運算、不碰任何資料（`parse_cursor` 只解自己
+      手上的游標，`as_cursor` 只編自己給的輸入），未擴大任何讀取面；但同樣不能因為「沒有安全影響」
+      就從揭露的縫隙掉出去
 - [ ] 同段一併補上 T11-02 引入的 `as_wire_ts(timestamptz)`：它不是 computed column，而是一支
       `authenticated` 可直接呼叫的 RPC（`POST /rest/v1/rpc/as_wire_ts`）。純字串格式化、不碰任何
       資料，存在的理由是兩支 SECURITY INVOKER 列表 RPC 需要它；但它同樣是「契約以外呼叫得到的
@@ -24,6 +29,11 @@
 - [ ] 語意文件維持語言中立，不含任何 client 語言程式碼
 - [ ] Postman collection 依資料夾順序執行即為完整流程、token 由 script 自動帶入的既有設計維持；newman 全綠
 - [ ] 契約變更政策段落更新：錯誤 token 字串永久凍結、新增為非破壞性、改名或刪除為破壞性變更並須取得 iOS 簽核
+- [ ] 把 T11 全系列的設計結論升級成 ADR（`docs/adr/`，編號遞增），並將 `docs/tasks/T11-contract-v3-design.md`
+      搬 `docs/tasks/archive/`——該設計檔開頭即註明「動工後結論該升級成 ADR」。至少涵蓋：不透明游標
+      （不簽章、版本＋排序鍵雙閘門、拒絕舊游標而非靜默退化，T11-03）、色票與樣式代號放裝置端
+      （T11-04）、私人便條的可見性與撿取回應（T11-05）。刻意留到此處一次處理，
+      而非每張票各開一支 ADR——它們是同一個設計的不同面向
 - [ ] 派**獨立** subagent 做安全審查：RLS 是否可繞過、新增欄位是否經由契約外的直讀路徑外洩、參數驗證、濫用防護
 - [ ] 派**獨立** subagent 做正確性驗證：邊界條件、游標平手情境、兩人同時撿同一張便條的併發情境
 - [ ] 兩位複核者**只拿 spec、不繼承實作過程的假設**；兩份結論回報後這張票才算完成，發現的問題先回報再修

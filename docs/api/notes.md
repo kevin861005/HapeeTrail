@@ -123,26 +123,35 @@ curl -X POST "$BASE/rest/v1/rpc/pickup_note" -H "apikey: $KEY" \
 
 ## 7. my_notes／my_collection — 列表（cursor 分頁）
 
+兩支都回傳 envelope：
+
+```json
+{ "items": [ /* Note */ ], "nextCursor": "eyJpIjogIjAzMDkyNWI2…" }
+```
+
 排序：my_notes 依 `createdAt` 新→舊、my_collection 依 `pickedUpAt` 新→舊。
 每頁預設 50、上限 100。翻頁規則：
 
-- 第一頁：不帶游標。
-- 下一頁：帶上一頁**最後一列**的 timestamp ＋ `id`（my_notes 用 `p_before_created_at`、
-  my_collection 用 `p_before_picked_at`，各配 `p_before_id`）。
-- **游標兩欄位必須成對**，只帶一個 → `invalid_cursor`（client bug）。
-- **空陣列＝沒有更多**（唯一的終止訊號）。
-- ⚠️ **游標 timestamp 必須原樣回傳伺服器給的字串**（byte-for-byte）。經過日期型別
-  來回轉換會丟失微秒精度，翻頁會靜默掉列。實作上請將時間欄位以字串保存、
-  顯示時才轉日期。
+- 第一頁：不帶 `p_cursor`（或給 null）。
+- 下一頁：把上一頁的 `nextCursor` **原樣**放進 `p_cursor`。
+- **`nextCursor` 為 null ＝ 沒有更多**（唯一的終止訊號）。伺服器保證非 null 時確實還有
+  資料，不必為了確認結束多打一次空頁。
+- 游標是**不透明字串**：不要解碼、解析、竄改或自行組裝，只需原樣回傳。內部結構不屬於
+  契約，後端可能隨時改變（例如日後改以距離或熱門度排序）；屆時舊游標會被拒為
+  `invalid_cursor` 而非靜默退化，client 重新從第一頁開始即可。
+- **拿錯游標不會靜默回錯的資料**：游標編碼了自己屬於哪一支列表的排序，把 my_notes 的
+  游標餵給 my_collection（或反之）一律 `invalid_cursor`。這是伺服器把關的，
+  不是 client 需要小心的規則。
+- 無法解碼、被竄改、或排序語意已變更的游標 → `invalid_cursor`（HTTP 400）。
 
 ```bash
 # 第一頁
 curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"p_limit":50}'
-# 下一頁（游標＝上一頁最後一列的 createdAt 原樣字串 + id）
+# 下一頁（游標＝上一頁的 nextCursor，原樣回傳）
 curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"p_limit":50,"p_before_created_at":"2026-07-12T03:21:45.123456Z","p_before_id":"5f8f1c1e-…"}'
+  -d '{"p_limit":50,"p_cursor":"eyJpIjogIjAzMDkyNWI2…"}'
 ```
 
 ## 8. 錯誤碼表（凍結契約）
@@ -153,7 +162,7 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 |---|---|---|
 | `not_authenticated` | 全部 | 防禦碼，同 session 刷新路徑 |
 | `invalid_coordinates` | drop/nearby/pickup | client bug，修 payload |
-| `invalid_cursor` | my_notes/my_collection | client bug，游標必須成對 |
+| `invalid_cursor` | my_notes/my_collection | 游標無效或已過期格式，改從第一頁重新載入 |
 | `content_empty` / `content_too_long` | drop | 表單行內提示（1–500 code point） |
 | `active_note_limit` | drop | 「等便條被撿走再留」（上限 50 張未撿） |
 | `note_not_found` | pickup | 移除 pin、刷新 |
@@ -177,7 +186,10 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 - 2026-07-28 **v3.0**（進行中，iOS 動工前一次到位）：wire format 改版（**breaking**）——
   鍵名改 camelCase、座標改巢狀 `coordinate` 物件、時間戳格式固定為六位小數 ＋ `Z`、
   nearby_notes 改回傳 `{ "items": [...] }` envelope。
-  請求端（`p_` 參數名、扁平座標）不變。
+  兩支列表改回傳 `{ items, nextCursor }` envelope，分頁改**單一不透明游標** `p_cursor`
+  （取代 `p_before_*` ＋ `p_before_id` 兩欄位）；隨之消失的三條規則：游標 timestamp 必須
+  byte-for-byte 原樣回傳、游標兩欄位必須成對、空陣列＝沒有更多。
+  請求端其餘部分（`p_` 參數名、扁平座標）不變。
 - 2026-07-12 **v2.2**：文件語言中立化——移除全部 Swift 程式碼，規則改以 wire 層語言
   陳述＋curl 範例；契約語意不變（wire format 無任何變動）。
 - 2026-07-12 **v2.1**：Note shape 移除 `author_id`/`picked_up_by`（**breaking**）；

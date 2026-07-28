@@ -183,39 +183,37 @@ paths:
     post:
       tags: [notes]
       operationId: myNotes
-      summary: 我投放的便條（keyset 分頁）
+      summary: 我投放的便條（cursor 分頁）
       description: |
         自己投放的便條（含已被撿走的；`pickedUpAt != null` ⇒ 被撿走），
-        `createdAt` 新→舊。**cursor-based 分頁**：第一頁不帶游標；
-        下一頁帶上一頁最後一列的 `createdAt` 與 `id`
-        （游標值必須原樣回傳伺服器給的字串，勿經 Date 轉換，避免精度損失）。
-        游標兩欄位必須成對：只帶一個 → `invalid_cursor`。
+        `createdAt` 新→舊。**cursor 分頁**：第一頁不帶 `p_cursor`；
+        下一頁把上一頁的 `nextCursor` **原樣**放進 `p_cursor`。
+        `nextCursor` 為 null ＝ 沒有更多——不必再多打一次確認。
+        游標無法解碼、被竄改、或不屬於本 endpoint 的排序 → `invalid_cursor`
+        （一律大聲失敗，不會靜默退化成第一頁或回錯資料）。
         錯誤 token：`not_authenticated` `invalid_cursor`
       requestBody:
         required: false
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/MyNotesPage"
+              $ref: "#/components/schemas/ListParams"
             examples:
               firstPage:
                 summary: 第一頁
                 value: { p_limit: 50 }
               nextPage:
-                summary: 下一頁（游標＝上一頁最後一列）
+                summary: 下一頁（游標＝上一頁的 nextCursor，原樣回傳）
                 value:
                   p_limit: 50
-                  p_before_created_at: "2026-07-12T03:21:45.123456Z"
-                  p_before_id: 5f8f1c1e-9a4b-4c58-a9b1-2f6d3f0f7c21
+                  p_cursor: <上一頁回傳的 nextCursor，原樣貼回>
       responses:
         "200":
-          description: 便條列表（新→舊；空陣列＝沒有更多）
+          description: 便條列表 envelope（新→舊；nextCursor 為 null ＝ 沒有更多）
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Note"
+                $ref: "#/components/schemas/NotePage"
         "400":
           $ref: "#/components/responses/BusinessError"
         "401":
@@ -225,10 +223,10 @@ paths:
     post:
       tags: [notes]
       operationId: myCollection
-      summary: 我撿到的便條（keyset 分頁）
+      summary: 我撿到的便條（cursor 分頁）
       description: |
-        自己撿到的便條，`pickedUpAt` 新→舊。分頁規則同 my_notes，
-        但游標是 `p_before_picked_at` ＋ `p_before_id`（必須成對，只帶一個 → `invalid_cursor`）。
+        自己撿到的便條，`pickedUpAt` 新→舊。分頁規則與參數同 my_notes。
+        游標編碼了所屬列表的排序，拿錯（my_notes 的游標給本 endpoint）→ `invalid_cursor`。
         `coordinate` 是投放位置（第一階段不記錄撿起位置）；無作者資訊，顯示為匿名旅人。
         錯誤 token：`not_authenticated` `invalid_cursor`
       requestBody:
@@ -236,16 +234,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/MyCollectionPage"
+              $ref: "#/components/schemas/ListParams"
       responses:
         "200":
-          description: 收藏列表（撿起時間新→舊；空陣列＝沒有更多）
+          description: 收藏列表 envelope（撿起時間新→舊；nextCursor 為 null ＝ 沒有更多）
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Note"
+                $ref: "#/components/schemas/NotePage"
         "400":
           $ref: "#/components/responses/BusinessError"
         "401":
@@ -366,39 +362,47 @@ components:
         createdAt:
           $ref: "#/components/schemas/Timestamp"
 
-    MyNotesPage:
-      type: object
-      description: my_notes 分頁參數（全部可省略＝第一頁、預設 50 筆）
-      properties:
-        p_limit:
-          type: integer
-          minimum: 1
-          maximum: 100
-          default: 50
-        p_before_created_at:
-          allOf: [{ $ref: "#/components/schemas/Timestamp" }]
-          description: 游標：上一頁最後一列的 createdAt（原樣字串）
-        p_before_id:
-          type: string
-          format: uuid
-          description: 游標：上一頁最後一列的 id（與 p_before_created_at 成對）
+    Cursor:
+      type: string
+      description: |
+        不透明分頁游標。**client 唯一的義務是原樣回傳**——不要解碼、不要解析、不要自行組裝。
+        內部結構不屬於契約，後端可能隨時改變（例如日後改以距離或熱門度排序）；屆時舊游標
+        會被拒為 `invalid_cursor` 而非靜默退化，client 只需重新從第一頁開始。
+        游標也編碼了它屬於哪一支列表的排序，因此拿錯（my_notes 的游標給 my_collection）
+        同樣是 `invalid_cursor`，而不是靜默回錯資料——由伺服器把關，不是 client 的義務。
+      example: <上一頁回傳的 nextCursor，原樣貼回>
 
-    MyCollectionPage:
+    ListParams:
       type: object
-      description: my_collection 分頁參數（全部可省略＝第一頁、預設 50 筆）
+      description: 列表分頁參數（my_notes 與 my_collection 共用；全部可省略＝第一頁、預設 50 筆）
       properties:
         p_limit:
           type: integer
           minimum: 1
           maximum: 100
           default: 50
-        p_before_picked_at:
-          allOf: [{ $ref: "#/components/schemas/Timestamp" }]
-          description: 游標：上一頁最後一列的 pickedUpAt（原樣字串）
-        p_before_id:
+        p_cursor:
+          allOf: [{ $ref: "#/components/schemas/Cursor" }]
+          description: 上一頁回傳的 nextCursor，原樣放進來即為下一頁；省略或 null ＝ 第一頁
+
+    NotePage:
+      type: object
+      description: 列表 envelope（一律物件而非裸陣列，日後加欄位才不是破壞性變更）
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          description: 本頁便條；無資料為空陣列（不會是 null）
+          items:
+            $ref: "#/components/schemas/Note"
+        nextCursor:
           type: string
-          format: uuid
-          description: 游標：上一頁最後一列的 id（與 p_before_picked_at 成對）
+          nullable: true
+          description: |
+            下一頁的游標（見 Cursor schema，原樣回傳即可）。
+            **null ＝ 沒有更多**，這是唯一的終止訊號；伺服器保證非 null 時確實還有資料，
+            client 不需要為了確認結束多打一次空頁。
 
     Session:
       type: object

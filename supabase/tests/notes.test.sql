@@ -284,24 +284,29 @@ begin
   if n <> 61 then raise exception 'FAIL: rate-limit loop ran % times, expected 61', n; end if;
 end $$;
 
--- ─── 列表 RPC：keyset 分頁 ──────────────────────────────────────────────────
+-- ─── 列表 RPC：envelope ＋ 不透明游標 ───────────────────────────────────────
 -- 注意：本測試單一 transaction，now() 恆定 ⇒ 所有 timestamp 同刻，
 -- 等於對複合游標 (ts, id) 的平手邏輯做最嚴苛的壓力測試。
+-- 只斷言外部可觀察行為：原樣回傳可翻頁、竄改被拒、nextCursor null ＝ 結束。
+-- 游標的內部編碼是實作細節，刻意不斷言。
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000b');
 do $$
 declare
-  seen uuid[] := '{}'; item jsonb; total int := 0; batch int;
-  last_ts timestamptz := null; last_id uuid := null;
+  seen uuid[] := '{}'; page jsonb; item jsonb; total int := 0; batch int;
+  cur text := null;
   prev_ts timestamptz; prev_id uuid;
   cur_ts timestamptz; cur_id uuid;
 begin
   -- B 以每頁 10 筆走完自己的 29 張：不重複、不遺漏、(createdAt,id) 嚴格遞減。
-  -- 游標值取自 wire 上的 createdAt 字串再轉回 timestamptz——同時驗證固定格式
-  -- 的微秒精度可無損往返（丟精度會在此重複或掉列）。
+  -- 終止訊號只看 nextCursor 為 null——不再靠「多打一次拿到空陣列」。
   loop
+    page := public.my_notes(10, cur);
+    if (select array_agg(k order by k) from jsonb_object_keys(page) k) <> array['items','nextCursor'] then
+      raise exception 'FAIL: my_notes envelope shape %', page;
+    end if;
     batch := 0; prev_ts := null; prev_id := null;
-    for item in select * from jsonb_array_elements(public.my_notes(10, last_ts, last_id)) loop
+    for item in select * from jsonb_array_elements(page->'items') loop
       batch := batch + 1;
       cur_ts := (item->>'createdAt')::timestamptz;
       cur_id := (item->>'id')::uuid;
@@ -312,53 +317,83 @@ begin
       end if;
       prev_ts := cur_ts; prev_id := cur_id;
     end loop;
-    exit when batch = 0;
     total := total + batch;
-    last_ts := prev_ts; last_id := prev_id;
+    exit when page->'nextCursor' = 'null'::jsonb;
+    if batch = 0 then raise exception 'FAIL: nextCursor 非 null 卻回了空頁'; end if;
+    cur := page->>'nextCursor';   -- client 唯一的義務：原樣回傳
   end loop;
   if total <> 29 then raise exception 'FAIL: my_notes walked % rows, expected 29', total; end if;
 
   -- p_limit 下界 clamp：0 → 1 筆
-  total := jsonb_array_length(public.my_notes(0, null, null));
+  total := jsonb_array_length(public.my_notes(0)->'items');
   if total <> 1 then raise exception 'FAIL: my_notes p_limit clamp, got %', total; end if;
 end $$;
 
--- 游標只帶一半 → invalid_cursor（靜默退化會掉列或重複，一律大聲失敗）
-select pg_temp.expect_error($$select * from public.my_notes(10, now(), null)$$, 'invalid_cursor');
-select pg_temp.expect_error(
-  $$select * from public.my_collection(10, null, 'deadbeef-dead-beef-dead-beefdeadbeef')$$,
-  'invalid_cursor');
+-- 邊界：頁大小恰好等於總筆數 ⇒ nextCursor 必為 null（旅人不必為了確認結束多轉一次載入圈）
+do $$
+declare p jsonb := public.my_notes(29);
+begin
+  if jsonb_array_length(p->'items') <> 29 or p->'nextCursor' <> 'null'::jsonb then
+    raise exception 'FAIL: exact-fit page should end pagination, nextCursor = %', p->'nextCursor';
+  end if;
+end $$;
+
+-- 無法解碼、被竄改、排序語意不符的游標一律 invalid_cursor（靜默退化會掉列或無限翻頁）。
+-- 一律以外部行為施測——不手工組游標、不斷言其內部編碼，否則改編碼就會誤紅。
+select pg_temp.expect_error($$select public.my_notes(10, 'not-a-cursor')$$, 'invalid_cursor');
+select pg_temp.expect_error($$select public.my_collection(10, '')$$, 'invalid_cursor');
+
+do $$
+declare c text := public.my_notes(1)->>'nextCursor';
+begin
+  if c is null then raise exception 'FAIL: 前置條件不成立——B 有 29 張，第一頁後應有游標'; end if;
+  -- 竄改（截斷）真游標
+  perform pg_temp.expect_error(format($q$select public.my_notes(10, '%s')$q$, substr(c, 1, 20)),
+                               'invalid_cursor');
+  -- 排序語意不符：my_notes 的游標（依 created_at）餵給 my_collection（依 picked_up_at）。
+  -- 沒有這道閘門的話會靜默拿 created_at 的值去比 picked_up_at ⇒ 回錯頁且毫無訊號。
+  perform pg_temp.expect_error(format($q$select public.my_collection(10, '%s')$q$, c),
+                               'invalid_cursor');
+end $$;
 
 -- D 的收藏 60 筆全部同刻 picked_up_at：預設 limit 50 → 游標翻頁拿剩下 10、無重疊
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000d');
 do $$
-declare p1 jsonb; p2 jsonb; c_ts timestamptz; c_id uuid; n int;
+declare p1 jsonb; p2 jsonb; n int;
 begin
   p1 := public.my_collection();
-  n := jsonb_array_length(p1);
+  n := jsonb_array_length(p1->'items');
   if n <> 50 then raise exception 'FAIL: my_collection default limit, got %', n; end if;
+  if p1->'nextCursor' = 'null'::jsonb then
+    raise exception 'FAIL: 還有 10 筆卻回 nextCursor null';
+  end if;
 
-  c_ts := (p1->49->>'pickedUpAt')::timestamptz;
-  c_id := (p1->49->>'id')::uuid;
-  p2 := public.my_collection(50, c_ts, c_id);
-  n := jsonb_array_length(p2);
+  p2 := public.my_collection(50, p1->>'nextCursor');
+  n := jsonb_array_length(p2->'items');
   if n <> 10 then raise exception 'FAIL: my_collection page 2, got % rows', n; end if;
-  if exists (select 1 from jsonb_array_elements(p1) a
-             join jsonb_array_elements(p2) b on a->>'id' = b->>'id') then
+  if p2->'nextCursor' <> 'null'::jsonb then
+    raise exception 'FAIL: 最後一頁 nextCursor 應為 null, got %', p2->'nextCursor';
+  end if;
+  if exists (select 1 from jsonb_array_elements(p1->'items') a
+             join jsonb_array_elements(p2->'items') b on a->>'id' = b->>'id') then
     raise exception 'FAIL: my_collection pages overlap';
   end if;
+
+  -- 反方向的排序語意閘門：my_collection 的游標餵給 my_notes
+  perform pg_temp.expect_error(
+    format($q$select public.my_notes(10, '%s')$q$, p1->>'nextCursor'), 'invalid_cursor');
 end $$;
 
--- A 的收藏 = 1 張（hello）；A 沒投放過任何便條 ⇒ my_notes 為空陣列而非 null
+-- A 的收藏 = 1 張（hello）；A 沒投放過任何便條 ⇒ items 為空陣列而非 null、nextCursor null
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000a');
 do $$
-declare n int := jsonb_array_length(public.my_collection());
+declare n int := jsonb_array_length(public.my_collection()->'items');
 begin
   if n <> 1 then raise exception 'FAIL: A my_collection expected 1, got %', n; end if;
-  if public.my_notes() <> '[]'::jsonb then
-    raise exception 'FAIL: empty my_notes should be [], got %', public.my_notes();
+  if public.my_notes() <> '{"items": [], "nextCursor": null}'::jsonb then
+    raise exception 'FAIL: empty my_notes shape %', public.my_notes();
   end if;
 end $$;
 

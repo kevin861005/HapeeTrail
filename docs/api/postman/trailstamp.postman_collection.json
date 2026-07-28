@@ -71,17 +71,15 @@
           }
         },
         {
-          "name": "my_notes 我的便條（第一頁）",
+          "name": "drop_note 再留一張（湊出第二頁）",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('200 + 至少一筆、含剛留的便條', () => {",
+                  "pm.test('200（A 共兩張便條，下面示範翻頁）', () => {",
                   "  pm.response.to.have.status(200);",
-                  "  const rows = pm.response.json();",
-                  "  pm.expect(rows).to.be.an('array').with.length.of.at.least(1);",
-                  "  pm.expect(rows.map(r => r.id)).to.include(pm.environment.get('note_id'));",
+                  "  pm.expect(pm.response.json().id).to.be.a('string');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -95,18 +93,82 @@
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_limit\":50}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/my_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_notes"] }
+            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 第二張 {{$randomInt}}\",\"p_lat\":35.6596,\"p_lng\":139.7006}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/drop_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "drop_note"] }
           }
         },
         {
-          "name": "my_notes 錯誤示範：游標只帶一半",
+          "name": "my_notes 第一頁（envelope，每頁 1 筆）",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('400 + invalid_cursor', () => {",
+                  "pm.test('200 + { items, nextCursor }；還有下一頁 ⇒ nextCursor 為字串', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.all.keys('items','nextCursor');",
+                  "  pm.expect(body.items).to.be.an('array').with.lengthOf(1);",
+                  "  pm.expect(body.nextCursor, '第 2 張還沒拿到，游標不該是 null').to.be.a('string');",
+                  "  pm.environment.set('next_cursor', body.nextCursor);",
+                  "  pm.environment.set('page1_id', body.items[0].id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_limit\":1}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/my_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_notes"] }
+          }
+        },
+        {
+          "name": "my_notes 第二頁（游標原樣回傳）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + 游標經 HTTP 往返仍可翻頁；最後一頁 nextCursor 為 null', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.all.keys('items','nextCursor');",
+                  "  pm.expect(body.items).to.be.an('array').with.lengthOf(1);",
+                  "  pm.expect(body.items[0].id, '第二頁不得重複第一頁').to.not.eql(pm.environment.get('page1_id'));",
+                  "  pm.expect([pm.environment.get('page1_id'), body.items[0].id]).to.include(pm.environment.get('note_id'));",
+                  "  pm.expect(body.nextCursor, 'A 只有兩張，翻完即結束').to.be.null;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_limit\":1,\"p_cursor\":\"{{next_cursor}}\"}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/my_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_notes"] }
+          }
+        },
+        {
+          "name": "my_notes 錯誤示範：游標被竄改",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('400 + invalid_cursor（不靜默退化成第一頁）', () => {",
                   "  pm.response.to.have.status(400);",
                   "  const e = pm.response.json();",
                   "  pm.expect(e.code).to.eql('P0001');",
@@ -124,7 +186,7 @@
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_before_id\":\"deadbeef-dead-beef-dead-beefdeadbeef\"}" },
+            "body": { "mode": "raw", "raw": "{\"p_limit\":1,\"p_cursor\":\"not-a-cursor\"}" },
             "url": { "raw": "{{base_url}}/rest/v1/rpc/my_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_notes"] }
           }
         }
@@ -258,10 +320,12 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('200 + 撿到的便條在收藏裡', () => {",
+                  "pm.test('200 + envelope + 撿到的便條在收藏裡', () => {",
                   "  pm.response.to.have.status(200);",
-                  "  const rows = pm.response.json();",
-                  "  pm.expect(rows.map(r => r.id)).to.include(pm.environment.get('note_id'));",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.all.keys('items','nextCursor');",
+                  "  pm.expect(body.items.map(r => r.id)).to.include(pm.environment.get('note_id'));",
+                  "  pm.expect(body.nextCursor, '只撿了一張，沒有下一頁').to.be.null;",
                   "});"
                 ],
                 "type": "text/javascript"

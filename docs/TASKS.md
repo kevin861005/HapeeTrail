@@ -12,7 +12,12 @@
   - 02 wire 格式 v3 ✅ 2026-07-28：`supabase/migrations/20260728010000_wire_format_v3.sql`；
     camelCase＋巢狀 coordinate＋固定六位小數時間戳＋nearby envelope；`ALL TESTS PASSED`、
     newman 9/9、redocly lint 通過、EXPLAIN 索引未退化（證據見 ticket 02）
-  - 下一步：對 03 跑 `/implement`
+  - 03 不透明游標 ✅ 2026-07-28：`supabase/migrations/20260728020000_opaque_cursor.sql`；
+    兩支列表改 `{items, nextCursor}` envelope、單一 `p_cursor` 取代 `p_before_*`＋`p_before_id`；
+    `ALL TESTS PASSED`、newman 11/11（含游標 HTTP 往返）、redocly lint 通過、
+    EXPLAIN 掃描節點與變更前逐字相同。code-review 抓到並修掉一個實質缺陷：
+    游標未帶排序鍵身分 ⇒ 跨列表混用會靜默回錯頁（證據與修正見 ticket 03）
+  - 下一步：對 04 跑 `/implement`
 
 ## 待辦
 - [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
