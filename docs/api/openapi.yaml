@@ -295,7 +295,7 @@ components:
           example:
             code: P0001
             message: too_far
-            details: null
+            details: '{"distanceM": 87}'
             hint: null
     AuthError:
       description: session 缺失/過期（非業務錯誤；client 走 session 刷新流程）
@@ -517,6 +517,18 @@ components:
         details:
           type: string
           nullable: true
+          example: '{"distanceM": 87}'
+          description: |
+            選配的附帶資料。**它是一個內容為 JSON 的字串，不是巢狀物件**——PostgREST 將
+            資料庫例外的 DETAIL 原樣當字串傳遞。要用它必須做**第二次 JSON 解析**，且
+            **必須把解析失敗視為「沒有附帶資料」而非錯誤**；欄位可能為 null，client 不得
+            依賴其存在（它讓文案更精確，不是流程的前提）。目前附帶資料的 token 與其解析後內容：
+            `too_far` → `{"distanceM": 87}`（伺服器當下算出的實際距離，公尺；與 NearbyHint 的
+            `distanceM` 同一算法）；`content_too_long` → `{"maxChars": 500}`（Unicode code point）；
+            `active_note_limit` → `{"maxActiveNotes": 50}`（未撿**公開**便條的數量上限）；
+            `pickup_rate_limited` → `{"retryAfterS": 1800}`（建議重試的秒數）。
+            其餘 token 的 `details` 為 null。新增鍵、或讓更多 token 附帶 `details`，
+            皆為非破壞性變更。
         hint:
           type: string
           nullable: true

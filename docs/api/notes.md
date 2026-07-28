@@ -44,8 +44,14 @@ curl -X POST "$BASE/auth/v1/signup" -H "apikey: $KEY" \
    一律走「session 刷新／通用重試」，**不得**對 message 字串做比對。
 
 ```json
-{ "code": "P0001", "message": "too_far", "details": null, "hint": null }
+{ "code": "P0001", "message": "too_far", "details": "{\"distanceM\": 87}", "hint": null }
 ```
+
+- `details` 是**選配的附帶資料**，讓提示文案可以顯示伺服器當下算出的真實數字（§8 列出
+  目前帶資料的四個 token，其餘為 null）。
+- ⚠️ **它是一個內容為 JSON 的字串，不是巢狀物件**——要用它必須做**第二次 JSON 解析**，
+  且**解析失敗一律視為「沒有附帶資料」而非錯誤**。`message` 仍是唯一的判斷依據；
+  `details` 可能為 null，client 不得依賴其存在。
 
 ## 3. 資料形狀
 
@@ -152,8 +158,9 @@ curl -X POST "$BASE/rest/v1/rpc/pickup_note" -H "apikey: $KEY" \
 - **冪等重試**：撿起已成功但回應在網路上遺失時，同一人重試會**再次回傳成功**
   （不會誤報 `note_taken`）——timeout 後可安心重試同一筆。
 - 別人的旅遊紀錄撿不走，回 `note_not_found`——與不存在的便條同一個答案（見 §3）。
-- `too_far` 不附距離數字；提示文案可用上次 NearbyHint 的 `distanceM`，
-  **不得解析錯誤字串取數字**。
+- `too_far` 的 `details` 附**伺服器當下算出的實際距離**（`{"distanceM": 87}`，與
+  NearbyHint 的 `distanceM` 同一算法）——文案可直接用它，不必沿用上一次探索結果的估計值。
+  依 §2，沒拿到 `details` 或解析失敗時退回不含數字的文案即可。
 
 ## 7. my_notes／my_collection — 列表（cursor 分頁）
 
@@ -208,6 +215,18 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 | `too_far` | pickup | 「再走近一點」 |
 | `pickup_rate_limited` | pickup | 通用「稍後再試」（60 次/小時） |
 
+**附帶 `details` 的 token**（其餘一律為 null；`details` 是內容為 JSON 的**字串**，
+需二次解析、解析失敗視為沒有附帶資料——見 §2）：
+
+| `message` | 解析後 | 拿來做什麼 |
+|---|---|---|
+| `too_far` | `{"distanceM": 87}` | 「還差 87 公尺」——伺服器當下算的，不是上次探索的估計值 |
+| `content_too_long` | `{"maxChars": 500}` | 告訴使用者要刪掉多少字 |
+| `active_note_limit` | `{"maxActiveNotes": 50}` | 說明為什麼不能再留 |
+| `pickup_rate_limited` | `{"retryAfterS": 1800}` | 大概要等多久，不必盲目重試 |
+
+新增鍵、或讓更多 token 附帶 `details`，皆為非破壞性變更。
+
 **變更政策**：token 字串永久凍結；新增為非破壞性（未知碼走 default），
 改名／刪除為破壞性變更，須同步更新 openapi.yaml＋本檔並取得 iOS 簽核。
 
@@ -220,7 +239,11 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 
 ## 10. Changelog
 
-- 2026-07-28 **v3.0**（進行中，iOS 動工前一次到位）：Note 新增 `audience`
+- 2026-07-28 **v3.0**（進行中，iOS 動工前一次到位）：四個業務錯誤開始附帶 `details`
+  （`too_far` 附真實距離、`content_too_long` 附字數上限、`active_note_limit` 附便條數上限、
+  `pickup_rate_limited` 附建議重試秒數；其餘為 null）——`details` 是**內容為 JSON 的字串**，
+  需二次解析。隨之消失的規則：「`too_far` 不附距離、不得解析錯誤字串取數字」。
+  Note 新增 `audience`
   （`anyone`／`self`），drop_note 新增可省略參數 `p_audience` 與 `invalid_audience` token；
   旅遊紀錄不進任何人的探索結果、別人撿取回 `note_not_found`、不佔用未撿便條上限。
   Note 與 NearbyHint 新增 `color`／`style`

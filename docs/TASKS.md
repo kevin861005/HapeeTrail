@@ -28,7 +28,15 @@
     理解，靜默走預設等於把私密便條變公開）；`ALL TESTS PASSED`、newman 11/11、redocly lint 通過、
     EXPLAIN 同資料前後對比計畫形狀不變且候選列 143→120。code-review 的 4 項已修
     （constraint 命名、OpenAPI default 位置、Postman 參數、註解裸引用）（證據見 ticket 05）
-  - 下一步：對 06 跑 `/implement`（07 需知：未知值政策必須把 `audience` 排除在外，見 ticket 05）
+  - 06 錯誤 details ✅ 2026-07-28：`supabase/migrations/20260728050000_error_details.sql`；
+    四種業務錯誤附帶伺服器當下算出的真實數字（`too_far` 附實際距離、`content_too_long` 附
+    `maxChars`、`active_note_limit` 附 `maxActiveNotes`、`pickup_rate_limited` 附 `retryAfterS`），
+    其餘為 null——測試 helper 的預設值讓 20+ 個既有呼叫點順便守住這條；token 與 transport 未動。
+    `ALL TESTS PASSED`、newman 12/12（含 `details` 為字串而非物件的 wire 斷言）、redocly lint 通過；
+    頻率閘門改寫後 EXPLAIN 由 Bitmap Heap Scan 3599 列降為 Index Only Scan 60 列。
+    code-review 的 4 項已修（證據見 ticket 06）
+  - 下一步：對 07 跑 `/implement`（需知：未知值政策必須把 `audience` 排除在外，見 ticket 05；
+    ticket 06 回報了一項待討論的重複——距離算法散在 `nearby_notes` 與 `pickup_note` 兩處）
 
 ## 待辦
 - [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）

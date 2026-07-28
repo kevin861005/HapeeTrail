@@ -258,6 +258,37 @@
           }
         },
         {
+          "name": "pickup_note 錯誤示範：距離不足（details 附真實距離）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('400 + too_far；details 是「內容為 JSON 的字串」而非巢狀物件', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  const e = pm.response.json();",
+                  "  pm.expect(e.code).to.eql('P0001');",
+                  "  pm.expect(e.message).to.eql('too_far');",
+                  "  pm.expect(e.details, 'PostgREST 把 DETAIL 原樣當字串傳遞 ⇒ client 需二次解析').to.be.a('string');",
+                  "  pm.expect(JSON.parse(e.details).distanceM, '伺服器當下算出的真實距離（此處約 130m）').to.be.within(120, 140);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":35.66067167,\"p_lng\":139.7005}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/pickup_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "pickup_note"] }
+          }
+        },
+        {
           "name": "pickup_note 撿起（50m 內）",
           "event": [
             {

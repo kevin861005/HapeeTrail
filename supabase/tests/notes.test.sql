@@ -14,14 +14,31 @@ create function pg_temp.login(u uuid) returns void language sql as $fn$
          set_config('role', 'authenticated', true);
 $fn$;
 
--- 期望 sql 丟出指定錯誤（want 可用 like pattern）
-create function pg_temp.expect_error(sql text, want text) returns void language plpgsql as $fn$
+-- 期望 sql 丟出指定錯誤（want 可用 like pattern）。
+-- want_detail 省略 ＝ 斷言該錯誤**不附帶任何資料**——於是每個既有呼叫點都順便守住
+-- 「只有那四種錯誤帶 details」這條契約，不必為每個 token 各寫一條斷言。
+create function pg_temp.expect_error(sql text, want text, want_detail jsonb default null)
+returns void language plpgsql as $fn$
+declare got text;
 begin
   begin
     execute sql;
   exception when others then
-    if sqlerrm = want or sqlerrm like want then return; end if;
-    raise exception 'FAIL: expected error [%], got [%]', want, sqlerrm;
+    get stacked diagnostics got = pg_exception_detail;
+    if not (sqlerrm = want or sqlerrm like want) then
+      raise exception 'FAIL: expected error [%], got [%]', want, sqlerrm;
+    end if;
+    -- details 在 wire 上是「內容為 JSON 的字串」；此處只比對它的內容。
+    -- 轉型只在「預期有 JSON」時才做：否則某個非預期的 DETAIL（如 check constraint 的
+    -- Failing row contains …）會在此拋轉型錯，蓋掉真正該看到的 FAIL 訊息
+    if want_detail is null then
+      if got <> '' then
+        raise exception 'FAIL: [%] 不該附帶 details, got [%]', want, got;
+      end if;
+    elsif got::jsonb is distinct from want_detail then
+      raise exception 'FAIL: [%] details expected [%], got [%]', want, want_detail, got;
+    end if;
+    return;
   end;
   raise exception 'FAIL: expected error [%], but call succeeded', want;
 end $fn$;
@@ -78,7 +95,9 @@ begin
 end $$;
 
 select pg_temp.expect_error($$select public.drop_note('   ', 35.6595, 139.7005)$$, 'content_empty');
-select pg_temp.expect_error($$select public.drop_note(repeat('あ', 501), 35.6595, 139.7005)$$, 'content_too_long');
+-- 附上限數字，旅人才知道要刪掉多少字（client 不必為了取得 500 去解析錯誤字串）
+select pg_temp.expect_error($$select public.drop_note(repeat('あ', 501), 35.6595, 139.7005)$$,
+                            'content_too_long', '{"maxChars": 500}');
 select pg_temp.expect_error($$select public.drop_note('x', 91, 139.7005)$$, 'invalid_coordinates');
 select pg_temp.expect_error($$select public.drop_note('x', 35.6595, null)$$, 'invalid_coordinates');
 
@@ -253,11 +272,20 @@ end $$;
 
 -- ─── pickup_note：距離、獨佔、冪等、診斷碼 ─────────────────────────────────
 do $$
-declare v_id uuid := current_setting('test.hello_id')::uuid; r jsonb; r2 jsonb;
+declare v_id uuid := current_setting('test.hello_id')::uuid; r jsonb; r2 jsonb; d text;
 begin
-  -- 70m 外 → too_far
-  perform pg_temp.expect_error(
-    format($q$select public.pickup_note('%s', 35.66013090, 139.7005)$q$, v_id), 'too_far');
+  -- 70m 外 → too_far，且附上伺服器**當下**算出的真實距離（不是 app 沿用上次探索的估計值）。
+  -- 距離是量測值，故以範圍斷言——寫死數字等於把 PostGIS 的算法抄進測試
+  begin
+    perform public.pickup_note(v_id, 35.66013090, 139.7005);
+    raise exception 'FAIL: expected too_far, but call succeeded';
+  exception when others then
+    if sqlerrm <> 'too_far' then raise; end if;
+    get stacked diagnostics d = pg_exception_detail;
+    if (d::jsonb->>'distanceM')::int not between 60 and 80 then
+      raise exception 'FAIL: too_far details %', d;
+    end if;
+  end;
 
   -- 30m 內 → 成功，content 揭露
   r := public.pickup_note(v_id, 35.65977039, 139.7005);
@@ -362,8 +390,10 @@ begin
   for i in 1..50 loop
     perform public.drop_note('cap ' || i, 35.0 + i * 0.001, 135.0);
   end loop;
+  -- 上限數字隨錯誤附上：旅人才理解為什麼不能再留（且數字改了不必發 app 版）
   perform pg_temp.expect_error(
-    $q$select public.drop_note('cap 51', 35.1, 135.0)$q$, 'active_note_limit');
+    $q$select public.drop_note('cap 51', 35.1, 135.0)$q$, 'active_note_limit',
+    '{"maxActiveNotes": 50}');
   -- 公開便條已滿，旅遊紀錄仍可繼續——這正是把私人便條排除在上限外的理由
   perform public.drop_note('journal after cap', 35.1, 135.0, p_audience => 'self');
 end $$;
@@ -389,8 +419,11 @@ begin
     if n <= 60 then
       perform public.pickup_note(v_id, 36.0, 135.0);
     else
+      -- 建議重試秒數：本測試在單一交易內，now() 恆定 ⇒ 60 次撿取全部同刻、
+      -- 時間窗一秒都還沒滑動，故恰為整個窗長 3600
       perform pg_temp.expect_error(
-        format($q$select public.pickup_note('%s', 36.0, 135.0)$q$, v_id), 'pickup_rate_limited');
+        format($q$select public.pickup_note('%s', 36.0, 135.0)$q$, v_id), 'pickup_rate_limited',
+        '{"retryAfterS": 3600}');
     end if;
   end loop;
   if n <> 61 then raise exception 'FAIL: rate-limit loop ran % times, expected 61', n; end if;
