@@ -53,22 +53,17 @@ create function pg_temp.fixture_users() returns uuid[] language sql immutable as
     '00000000-0000-0000-0000-00000000000b',  -- B：作者
     '00000000-0000-0000-0000-00000000000c',  -- C：50 張上限測試
     '00000000-0000-0000-0000-00000000000d',  -- D：60 次/時上限測試
-    '00000000-0000-0000-0000-00000000000e',  -- E：style 代號測試（便條刻意遠離東京，不干擾 nearby）
-    '00000000-0000-0000-0000-00000000000f'   -- F：私人便條測試（同上，另一個遠離的座標）
+    '00000000-0000-0000-0000-00000000000e',  -- E：style 代號測試
+    '00000000-0000-0000-0000-00000000000f'   -- F：私人便條測試
   ]::uuid[]
 $fn$;
 
--- 把探索結果濾成「本測試建立的便條」。
--- nearby_notes 是唯一會跨使用者看見便條的查詢，於是也是唯一會被外來資料污染的地方
--- （其餘查詢都被 RLS 限縮在自己的列內）。共用的開發資料庫上這很容易發生——
--- docs/api/notes.md §4 的 curl 範例用的就是本檔的東京基準點，照著文件敲一次就會踩到，
--- 而失敗訊息會寫成「private note leaked」「own notes appeared」，把人導向
--- 「過濾邏輯壞了」這個完全錯誤的方向。
+-- 把探索結果濾成「本測試建立的便條」。nearby_notes 是唯一會跨使用者看見便條的查詢，
+-- 於是也是唯一會被外來資料污染的地方（其餘查詢都被 RLS 限縮在自己的列內）；不濾的話，
+-- 失敗訊息會寫成「private note leaked」「own notes appeared」，把人導向「過濾邏輯壞了」
+-- 這個完全錯誤的方向。
+-- 這支只擋得住「外來便條混進結果」；「擠出最近 20 筆」那一半由隨機座標擋，理由見下方。
 -- SECURITY DEFINER：查作者需要繞過 RLS（呼叫時已登入為某個測試使用者，看不到別人的列）。
--- ponytail: 只擋得住「外來便條混進結果」，擋不住「外來便條把我們的擠出前 20 名」——
--- nearby_notes 先取最近的 20 筆，才輪到這裡過濾。真撞上時斷言會**紅**（不是靜默綠），
--- 訊息是「expected 2 nearby rows, got 0」之類，追得回來。升級路徑：測試座標比照
--- postman collection 改成每次隨機，代價是註解裡那些手算的公尺數會失去固定參照。
 create function pg_temp.ours(items jsonb) returns jsonb
 language sql stable security definer set search_path = '' as $fn$
   select coalesce(pg_catalog.jsonb_agg(t.h order by t.ord), '[]'::jsonb)
@@ -78,17 +73,38 @@ language sql stable security definer set search_path = '' as $fn$
 $fn$;
 
 -- ─── 假使用者與座標 ──────────────────────────────────────────────────────────
--- 東京基準點；緯度每度約 110,953m（35.66°N），偏移只動 lat 便於計算
---   30m ≈ 0.00027039、70m ≈ 0.00063090、130m ≈ 0.00117167
 insert into auth.users (id) select unnest(pg_temp.fixture_users());  -- 名單見檔頭 helper
+
+-- 測試座標每次隨機。固定座標的問題：nearby_notes 先取最近 20 筆，才輪到 pg_temp.ours()
+-- 過濾，所以共用資料庫上只要有人在測試點附近留下夠多便條（實測 19 張），測試自己的便條
+-- 就會被擠出結果、斷言爆掉——而 docs/api/notes.md §4 的 curl 範例用的正是本檔原本那個
+-- 固定的東京點，照文件敲幾次就會踩到。過濾（pg_temp.ours）與隨機座標各擋一半，缺一不可。
+select set_config('test.lat', (random() * 115 - 60)::text, true),   -- 緯度帶 -60..55
+       set_config('test.lng', (random() * 360 - 180)::text, true);
+-- 註：座標經 ::text 進 GUC，等於截到 15 位有效數字（DBL_DIG）——float8 的 text 往返
+-- 在 extra_float_digits = 0 下不保證無損，下方「回傳座標等於送出座標」的斷言正是靠這一截
+-- 才穩定。日後若改成不經 GUC 直傳 float8，那條斷言會變成高機率 flaky。
+
+-- 本測試的所有座標一律經此取得。`d` 是相對基準點的**緯度**位移（度）。
+-- 位移只動緯度：每度的公尺數不隨經度改變（110,574–111,412m／度，帶內差 0.76%），
+-- 隨機地點才能沿用下面手算的距離：30m ≈ 0.00027039、70m ≈ 0.00063090、130m ≈ 0.00117167。
+-- 各使用者的便條群以「整數度」隔開（1 度 ≈ 111km ≫ 100m 探索半徑）⇒ 群組間永遠互不可見，
+-- 這是不變式而不是機率：0 主群／2 私人（F）／4 樣式（E）／6 上限（C）／8 頻率（D）。
+-- 最大位移 8 ＋ 基準上界 55 ＝ 63 度，離 ±90 還很遠。
+create function pg_temp.tlat(d float8 default 0) returns float8
+language sql stable as $fn$ select current_setting('test.lat')::float8 + d $fn$;
+create function pg_temp.tlng() returns float8
+language sql stable as $fn$ select current_setting('test.lng')::float8 $fn$;
 
 -- ─── drop_note：驗證與 trim ─────────────────────────────────────────────────
 select pg_temp.login('00000000-0000-0000-0000-00000000000b');
 
 do $$
 declare r jsonb;
+        lat float8 := pg_temp.tlat();
+        lng float8 := pg_temp.tlng();
 begin
-  r := public.drop_note('  hello from Tokyo  ', 35.6595, 139.7005);
+  r := public.drop_note('  hello from Tokyo  ', lat, lng);
   if r->>'content' <> 'hello from Tokyo' then
     raise exception 'FAIL: btrim not applied, got %', r->>'content';
   end if;
@@ -109,8 +125,8 @@ begin
   -- 座標為巢狀物件
   if (select array_agg(k order by k) from jsonb_object_keys(r->'coordinate') k)
      <> array['latitude','longitude']
-     or (r->'coordinate'->>'latitude')::float8 <> 35.6595
-     or (r->'coordinate'->>'longitude')::float8 <> 139.7005 then
+     or (r->'coordinate'->>'latitude')::float8 <> lat
+     or (r->'coordinate'->>'longitude')::float8 <> lng then
     raise exception 'FAIL: coordinate not nested/correct: %', r->'coordinate';
   end if;
   -- 時間戳固定六位小數 ＋ Z（client 不必為位數寫容錯分支）
@@ -122,20 +138,26 @@ begin
   end if;
 end $$;
 
-select pg_temp.expect_error($$select public.drop_note('   ', 35.6595, 139.7005)$$, 'content_empty');
+-- 以下 expect_error 的座標一律寫 0, 0：這些呼叫必定被拒、不會建立便條，座標是什麼都不影響。
+-- 寫成明顯無意義的值，才不會被誤讀成「某個有來由的測試點」（真會建便條的都走 pg_temp.tlat）。
+select pg_temp.expect_error($$select public.drop_note('   ', 0, 0)$$, 'content_empty');
 -- 附上限數字，旅人才知道要刪掉多少字（client 不必為了取得 500 去解析錯誤字串）
-select pg_temp.expect_error($$select public.drop_note(repeat('あ', 501), 35.6595, 139.7005)$$,
+select pg_temp.expect_error($$select public.drop_note(repeat('あ', 501), 0, 0)$$,
                             'content_too_long', '{"maxChars": 500}');
-select pg_temp.expect_error($$select public.drop_note('x', 91, 139.7005)$$, 'invalid_coordinates');
-select pg_temp.expect_error($$select public.drop_note('x', 35.6595, null)$$, 'invalid_coordinates');
+select pg_temp.expect_error($$select public.drop_note('x', 91, 0)$$, 'invalid_coordinates');
+select pg_temp.expect_error($$select public.drop_note('x', 0, null)$$, 'invalid_coordinates');
 
 -- 500 字元恰好合法（char_length 算 code point）
-do $$ begin perform public.drop_note(repeat('あ', 500), 35.66200, 139.7005); end $$;
+do $$ begin perform public.drop_note(repeat('あ', 500),
+  pg_temp.tlat(0.00250),   -- ~277m，探索半徑外
+  pg_temp.tlng()); end $$;
 
 -- B 再放一張 70m 處的便條（nearby 可見但不可撿）；刻意給非預設代號，驗證它一路走到 wire
-do $$ begin perform public.drop_note('at 70m', 35.66013090, 139.7005, 7, 3); end $$;
+do $$ begin perform public.drop_note('at 70m',
+  pg_temp.tlat(0.00063090), pg_temp.tlng(), 7, 3); end $$;
 -- B 放一張 130m 處的便條（nearby 不可見）
-do $$ begin perform public.drop_note('at 130m', 35.66067167, 139.7005); end $$;
+do $$ begin perform public.drop_note('at 130m',
+  pg_temp.tlat(0.00117167), pg_temp.tlng()); end $$;
 
 -- ─── style 代號：預設、可省略、互不干擾、超出對照表範圍照收 ─────────────────
 -- 後端只存代號、不理解語意（對照表在裝置端）⇒ 超範圍的值必須原樣存、原樣回，且無錯誤訊號
@@ -143,28 +165,30 @@ reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000e');
 do $$
 declare r jsonb;
+        elat float8 := pg_temp.tlat(4);
+        elng float8 := pg_temp.tlng();
 begin
   -- 兩欄位各自獨立：給不同值不得互換、不得被打包成單一數字
-  r := public.drop_note('codes', 10.0, 10.0, 7, 3);
+  r := public.drop_note('codes', elat, elng, 7, 3);
   if (r->>'color')::int <> 7 or (r->>'style')::int <> 3 then
     raise exception 'FAIL: explicit codes not round-tripped: %', r;
   end if;
   -- 只給一個，另一個補伺服器預設
-  r := public.drop_note('color only', 10.0, 10.0, 9);
+  r := public.drop_note('color only', elat, elng, 9);
   if (r->>'color')::int <> 9 or (r->>'style')::int <> 1 then
     raise exception 'FAIL: partial codes: %', r;
   end if;
   -- 超出裝置端對照表的代號：照收（後端不維護第二份合法值清單）
-  r := public.drop_note('unknown codes', 10.0, 10.0, 999, 32767);
+  r := public.drop_note('unknown codes', elat, elng, 999, 32767);
   if (r->>'color')::int <> 999 or (r->>'style')::int <> 32767 then
     raise exception 'FAIL: out-of-table codes not accepted verbatim: %', r;
   end if;
 end $$;
 
 -- 粗檢只擋型別與範圍（非正整數、超出 smallint），不擋語意
-select pg_temp.expect_error($$select public.drop_note('x', 10.0, 10.0, 0, 1)$$, 'invalid_style_code');
-select pg_temp.expect_error($$select public.drop_note('x', 10.0, 10.0, 1, -1)$$, 'invalid_style_code');
-select pg_temp.expect_error($$select public.drop_note('x', 10.0, 10.0, 32768, 1)$$, 'invalid_style_code');
+select pg_temp.expect_error($$select public.drop_note('x', 0, 0, 0, 1)$$, 'invalid_style_code');
+select pg_temp.expect_error($$select public.drop_note('x', 0, 0, 1, -1)$$, 'invalid_style_code');
+select pg_temp.expect_error($$select public.drop_note('x', 0, 0, 32768, 1)$$, 'invalid_style_code');
 
 -- ─── 私人便條（audience）：不進他人探索、他人撿不到、不佔上限 ─────────────────
 -- F 在同一點放兩張：一張公開、一張旅遊紀錄。過濾若失效，E 的探索會看到兩張——
@@ -173,9 +197,11 @@ reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000f');
 do $$
 declare r jsonb;
+        plat float8 := pg_temp.tlat(2);
+        plng float8 := pg_temp.tlng();
 begin
-  perform public.drop_note('public at 20,20', 20.0, 20.0);
-  r := public.drop_note('journal at 20,20', 20.0, 20.0, p_audience => 'self');
+  perform public.drop_note('F public', plat, plng);
+  r := public.drop_note('F journal', plat, plng, p_audience => 'self');
   if r->>'audience' <> 'self' then
     raise exception 'FAIL: audience not round-tripped: %', r;
   end if;
@@ -183,11 +209,11 @@ end $$;
 
 -- 不合法的值一律大聲失敗：靜默走預設會把旅人以為私密的便條變成公開的
 select pg_temp.expect_error(
-  $$select public.drop_note('x', 20.0, 20.0, p_audience => 'public')$$, 'invalid_audience');
+  $$select public.drop_note('x', 0, 0, p_audience => 'public')$$, 'invalid_audience');
 select pg_temp.expect_error(
-  $$select public.drop_note('x', 20.0, 20.0, p_audience => 'SELF')$$, 'invalid_audience');
+  $$select public.drop_note('x', 0, 0, p_audience => 'SELF')$$, 'invalid_audience');
 select pg_temp.expect_error(
-  $$select public.drop_note('x', 20.0, 20.0, p_audience => '')$$, 'invalid_audience');
+  $$select public.drop_note('x', 0, 0, p_audience => '')$$, 'invalid_audience');
 
 -- 私人便條的 id：RLS 下 E 看不到，先以 postgres 身分存起來（否則測試會變成空測）
 reset role;
@@ -195,11 +221,13 @@ select set_config('test.journal_id',
   -- 作者條件不可省：外來使用者留下同內容的便條會讓這個純量子查詢炸成
   -- 「more than one row returned by a subquery」，訊息同樣不指向真因
   (select id::text from public.notes
-    where content = 'journal at 20,20' and author_id = any(pg_temp.fixture_users())), true);
+    where content = 'F journal' and author_id = any(pg_temp.fixture_users())), true);
 
 select pg_temp.login('00000000-0000-0000-0000-00000000000e');
 do $$
-declare r jsonb := public.nearby_notes(20.0, 20.0);
+declare plat float8 := pg_temp.tlat(2);
+        plng float8 := pg_temp.tlng();
+        r jsonb := public.nearby_notes(plat, plng);
         ours jsonb;
 begin
   -- F 在 (20,20) 放了一公開一私人；E 從同一點查只該看到公開的那張
@@ -211,7 +239,8 @@ begin
   -- 他人撿私人便條 → note_not_found。不新增「這是私人便條」的 token：
   -- 那等於向外人確認該座標存在一張他看不到的便條
   perform pg_temp.expect_error(
-    format($q$select public.pickup_note('%s', 20.0, 20.0)$q$, current_setting('test.journal_id')),
+    format($q$select public.pickup_note('%s', %s, %s)$q$,
+           current_setting('test.journal_id'), plat, plng),
     'note_not_found');
 end $$;
 
@@ -219,16 +248,19 @@ reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000f');
 do $$
 declare p jsonb := public.my_notes();
+        plat float8 := pg_temp.tlat(2);
+        plng float8 := pg_temp.tlng();
 begin
   -- 作者自己撿 → own_note；對自己的便條沒有隱藏的必要（也不會有 UI 走到這）
   perform pg_temp.expect_error(
-    format($q$select public.pickup_note('%s', 20.0, 20.0)$q$, current_setting('test.journal_id')),
+    format($q$select public.pickup_note('%s', %s, %s)$q$,
+           current_setting('test.journal_id'), plat, plng),
     'own_note');
   -- 私人便條正常出現在自己的列表，且列表分得出哪些是旅遊紀錄
   if (select count(*) from jsonb_array_elements(p->'items') n
-      where n->>'content' = 'journal at 20,20' and n->>'audience' = 'self') <> 1
+      where n->>'content' = 'F journal' and n->>'audience' = 'self') <> 1
      or (select count(*) from jsonb_array_elements(p->'items') n
-         where n->>'content' = 'public at 20,20' and n->>'audience' = 'anyone') <> 1 then
+         where n->>'content' = 'F public' and n->>'audience' = 'anyone') <> 1 then
     raise exception 'FAIL: my_notes audience %', p;
   end if;
 end $$;
@@ -239,7 +271,7 @@ select pg_temp.login('00000000-0000-0000-0000-00000000000b');
 -- ─── nearby_notes：半徑、排序、pickable、排除自己 ──────────────────────────
 -- B 自己查：自己的便條一律不出現
 do $$
-declare r jsonb := public.nearby_notes(35.6595, 139.7005);
+declare r jsonb := public.nearby_notes(pg_temp.tlat(), pg_temp.tlng());
         ours jsonb;
 begin
   -- items 必須是陣列而非 null（零結果時為 []，client 不必為 null 寫分支）。
@@ -259,9 +291,11 @@ select pg_temp.login('00000000-0000-0000-0000-00000000000a');
 
 do $$
 declare r jsonb; h jsonb; i int := 0;
+        lat float8 := pg_temp.tlat();
+        lng float8 := pg_temp.tlng();
 begin
   -- 從基準點查：預期看到 0m（hello）與 70m 兩張，130m 那張不可見
-  r := public.nearby_notes(35.6595, 139.7005);
+  r := public.nearby_notes(lat, lng);
   -- 探索結果是含 items 的物件而非裸陣列（日後加欄位才不是破壞性變更）
   if (select array_agg(k) from jsonb_object_keys(r) k) <> array['items']
      or jsonb_typeof(r->'items') <> 'array' then
@@ -299,7 +333,8 @@ select pg_temp.expect_error($$select * from public.nearby_notes(200, 0)$$, 'inva
 -- 上限 20 筆：直接塞 25 張別人的便條在同一點
 reset role;
 insert into public.notes (author_id, content, lat, lng)
-select '00000000-0000-0000-0000-00000000000b', 'bulk ' || g, 35.65953, 139.70053
+select '00000000-0000-0000-0000-00000000000b', 'bulk ' || g,
+       pg_temp.tlat(0.00003), pg_temp.tlng()
 from generate_series(1, 25) g;
 -- 以 postgres 身分先存 hello 便條 id（RLS 下 A/D 看不到未撿的它）
 select set_config('test.hello_id',
@@ -307,7 +342,8 @@ select set_config('test.hello_id',
     where content = 'hello from Tokyo' and author_id = any(pg_temp.fixture_users())), true);
 select pg_temp.login('00000000-0000-0000-0000-00000000000a');
 do $$
-declare c int := jsonb_array_length(public.nearby_notes(35.6595, 139.7005)->'items');
+declare c int := jsonb_array_length(
+          public.nearby_notes(pg_temp.tlat(), pg_temp.tlng())->'items');
 begin
   if c <> 20 then raise exception 'FAIL: nearby limit, expected 20 got %', c; end if;
 end $$;
@@ -315,11 +351,13 @@ end $$;
 -- ─── pickup_note：距離、獨佔、冪等、診斷碼 ─────────────────────────────────
 do $$
 declare v_id uuid := current_setting('test.hello_id')::uuid; r jsonb; r2 jsonb; d text;
+        lat float8 := pg_temp.tlat();
+        lng float8 := pg_temp.tlng();
 begin
   -- 70m 外 → too_far，且附上伺服器**當下**算出的真實距離（不是 app 沿用上次探索的估計值）。
   -- 距離是量測值，故以範圍斷言——寫死數字等於把 PostGIS 的算法抄進測試
   begin
-    perform public.pickup_note(v_id, 35.66013090, 139.7005);
+    perform public.pickup_note(v_id, lat + 0.00063090, lng);
     raise exception 'FAIL: expected too_far, but call succeeded';
   exception when others then
     if sqlerrm <> 'too_far' then raise; end if;
@@ -330,14 +368,14 @@ begin
   end;
 
   -- 30m 內 → 成功，content 揭露
-  r := public.pickup_note(v_id, 35.65977039, 139.7005);
+  r := public.pickup_note(v_id, lat + 0.00027039, lng);
   if r->>'content' <> 'hello from Tokyo'
      or (r->>'pickedUpAt') !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$' then
     raise exception 'FAIL: pickup result wrong: %', r;
   end if;
 
   -- 本人重試 → 冪等成功（不是 note_taken）
-  r2 := public.pickup_note(v_id, 35.65977039, 139.7005);
+  r2 := public.pickup_note(v_id, lat + 0.00027039, lng);
   if r2->>'id' <> r->>'id' then raise exception 'FAIL: idempotent retry mismatch'; end if;
 end $$;
 
@@ -348,7 +386,8 @@ do $$
 declare v_id uuid := current_setting('test.hello_id')::uuid;
 begin
   perform pg_temp.expect_error(
-    format($q$select public.pickup_note('%s', 35.65977039, 139.7005)$q$, v_id), 'note_taken');
+    format($q$select public.pickup_note('%s', %s, %s)$q$, v_id,
+           pg_temp.tlat(0.00027039), pg_temp.tlng()), 'note_taken');
 end $$;
 
 -- 作者撿自己的 → own_note；亂 uuid → note_not_found
@@ -359,9 +398,10 @@ declare v_id uuid;
 begin
   select n.id into v_id from public.notes n where n.content = 'at 70m';
   perform pg_temp.expect_error(
-    format($q$select public.pickup_note('%s', 35.66013090, 139.7005)$q$, v_id), 'own_note');
+    format($q$select public.pickup_note('%s', %s, %s)$q$, v_id,
+           pg_temp.tlat(0.00063090), pg_temp.tlng()), 'own_note');
   perform pg_temp.expect_error(
-    $q$select public.pickup_note('deadbeef-dead-beef-dead-beefdeadbeef', 35.6595, 139.7005)$q$,
+    $q$select public.pickup_note('deadbeef-dead-beef-dead-beefdeadbeef', 0, 0)$q$,
     'note_not_found');
 end $$;
 
@@ -372,7 +412,8 @@ do $$
 declare c int;
 begin
   select count(*) into c
-  from jsonb_array_elements(public.nearby_notes(35.6595, 139.7005)->'items') h
+  from jsonb_array_elements(
+         public.nearby_notes(pg_temp.tlat(), pg_temp.tlng())->'items') h
   where h->>'id' = current_setting('test.hello_id');
   if c <> 0 then raise exception 'FAIL: picked note still in nearby'; end if;
 end $$;
@@ -415,49 +456,54 @@ select pg_temp.expect_error($$select public.distance_m(null, null)$$, 'permissio
 -- anon role 完全不可達
 reset role;
 set local role anon;
-select pg_temp.expect_error($$select * from public.nearby_notes(35.6595, 139.7005)$$, 'permission denied%');
-select pg_temp.expect_error($$select public.drop_note('x', 35.6595, 139.7005)$$, 'permission denied%');
+select pg_temp.expect_error($$select * from public.nearby_notes(0, 0)$$, 'permission denied%');
+select pg_temp.expect_error($$select public.drop_note('x', 0, 0)$$, 'permission denied%');
 select pg_temp.expect_error($$select count(*) from public.notes$$, 'permission denied%');
 select pg_temp.expect_error($$select public.distance_m(null, null)$$, 'permission denied%');
 reset role;
 
 -- authenticated role 但 JWT claims 為空 → 防禦碼 not_authenticated
 select set_config('request.jwt.claims', '', true), set_config('role', 'authenticated', true);
-select pg_temp.expect_error($$select * from public.nearby_notes(35.6595, 139.7005)$$, 'not_authenticated');
+select pg_temp.expect_error($$select * from public.nearby_notes(0, 0)$$, 'not_authenticated');
 reset role;
 
 -- ─── 反濫用上限 ─────────────────────────────────────────────────────────────
 -- C：第 51 張未撿便條 → active_note_limit
 select pg_temp.login('00000000-0000-0000-0000-00000000000c');
 do $$
+declare clat float8 := pg_temp.tlat(6);
+        clng float8 := pg_temp.tlng();
 begin
   -- 先放 3 張旅遊紀錄：上限若誤計私人便條，下面第 48 張公開便條就會被擋
   for i in 1..3 loop
-    perform public.drop_note('journal ' || i, 35.0, 135.0, p_audience => 'self');
+    perform public.drop_note('journal ' || i, clat, clng, p_audience => 'self');
   end loop;
   for i in 1..50 loop
-    perform public.drop_note('cap ' || i, 35.0 + i * 0.001, 135.0);
+    perform public.drop_note('cap ' || i, clat + i * 0.001, clng);
   end loop;
   -- 上限數字隨錯誤附上：旅人才理解為什麼不能再留（且數字改了不必發 app 版）
   perform pg_temp.expect_error(
-    $q$select public.drop_note('cap 51', 35.1, 135.0)$q$, 'active_note_limit',
-    '{"maxActiveNotes": 50}');
+    format($q$select public.drop_note('cap 51', %s, %s)$q$, clat + 0.1, clng),
+    'active_note_limit', '{"maxActiveNotes": 50}');
   -- 公開便條已滿，旅遊紀錄仍可繼續——這正是把私人便條排除在上限外的理由
-  perform public.drop_note('journal after cap', 35.1, 135.0, p_audience => 'self');
+  perform public.drop_note('journal after cap', clat + 0.1, clng, p_audience => 'self');
 end $$;
 
 -- D：一小時內第 61 次撿取 → pickup_rate_limited
 reset role;
 insert into public.notes (author_id, content, lat, lng)
-select '00000000-0000-0000-0000-00000000000c', 'ratelimit ' || g, 36.0, 135.0
+select '00000000-0000-0000-0000-00000000000c', 'ratelimit ' || g, pg_temp.tlat(8), pg_temp.tlng()
 from generate_series(1, 61) g;
 -- 以 postgres 身分存 61 個 id（RLS 下 D 看不到未撿的它們）
 select set_config('test.rl_ids',
-  (select string_agg(id::text, ',') from public.notes where content like 'ratelimit %'), true);
+  (select string_agg(id::text, ',') from public.notes
+    where content like 'ratelimit %' and author_id = any(pg_temp.fixture_users())), true);
 select pg_temp.login('00000000-0000-0000-0000-00000000000d');
 do $$
 declare v_ids uuid[] := string_to_array(current_setting('test.rl_ids'), ',')::uuid[];
         v_id uuid; n int := 0;
+        dlat float8 := pg_temp.tlat(8);
+        dlng float8 := pg_temp.tlng();
 begin
   if array_length(v_ids, 1) <> 61 then
     raise exception 'FAIL: expected 61 ratelimit ids, got %', array_length(v_ids, 1);
@@ -465,13 +511,13 @@ begin
   foreach v_id in array v_ids loop
     n := n + 1;
     if n <= 60 then
-      perform public.pickup_note(v_id, 36.0, 135.0);
+      perform public.pickup_note(v_id, dlat, dlng);
     else
       -- 建議重試秒數：本測試在單一交易內，now() 恆定 ⇒ 60 次撿取全部同刻、
       -- 時間窗一秒都還沒滑動，故恰為整個窗長 3600
       perform pg_temp.expect_error(
-        format($q$select public.pickup_note('%s', 36.0, 135.0)$q$, v_id), 'pickup_rate_limited',
-        '{"retryAfterS": 3600}');
+        format($q$select public.pickup_note('%s', %s, %s)$q$, v_id, dlat, dlng),
+        'pickup_rate_limited', '{"retryAfterS": 3600}');
     end if;
   end loop;
   if n <> 61 then raise exception 'FAIL: rate-limit loop ran % times, expected 61', n; end if;
@@ -497,8 +543,10 @@ do $$
 declare v_ids uuid[] := string_to_array(current_setting('test.rl_ids'), ',')::uuid[];
         v_was timestamptz := current_setting('test.rl_first_at')::timestamptz;
         r jsonb;
+        dlat float8 := pg_temp.tlat(8);
+        dlng float8 := pg_temp.tlng();
 begin
-  r := public.pickup_note(v_ids[1], 36.0, 135.0);
+  r := public.pickup_note(v_ids[1], dlat, dlng);
   if r->>'id' <> v_ids[1]::text then
     raise exception 'FAIL: 頻率閘門下的冪等重試沒回原便條, got %', r;
   end if;
@@ -507,8 +555,8 @@ begin
       public.as_wire_ts(v_was), r->>'pickedUpAt';
   end if;
   perform pg_temp.expect_error(
-    format($q$select public.pickup_note('%s', 36.0, 135.0)$q$, v_ids[61]), 'pickup_rate_limited',
-    '{"retryAfterS": 2580}');
+    format($q$select public.pickup_note('%s', %s, %s)$q$, v_ids[61], dlat, dlng),
+    'pickup_rate_limited', '{"retryAfterS": 2580}');
 end $$;
 reset role;
 update public.notes set picked_up_at = picked_up_at + interval '17 minutes'
