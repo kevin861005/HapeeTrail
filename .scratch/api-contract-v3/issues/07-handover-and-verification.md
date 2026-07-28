@@ -17,6 +17,10 @@
       可經 PostgREST 以 `notes?select=…,as_note_wire` 取得白名單化的便條形狀。RLS 仍生效（只看得到
       自己寫的或自己撿的列）、anon 不可達，未擴大讀取面；但既然該段的用途就是揭露契約以外讀得到什麼，
       它必須被列出來。若 T11-02～06 又新增類似的 computed column，一併補上
+- [ ] 同段一併補上 T11-02 引入的 `as_wire_ts(timestamptz)`：它不是 computed column，而是一支
+      `authenticated` 可直接呼叫的 RPC（`POST /rest/v1/rpc/as_wire_ts`）。純字串格式化、不碰任何
+      資料，存在的理由是兩支 SECURITY INVOKER 列表 RPC 需要它；但它同樣是「契約以外呼叫得到的
+      東西」，不能因為不是 computed column 就從上一條的縫隙掉出去
 - [ ] 語意文件維持語言中立，不含任何 client 語言程式碼
 - [ ] Postman collection 依資料夾順序執行即為完整流程、token 由 script 自動帶入的既有設計維持；newman 全綠
 - [ ] 契約變更政策段落更新：錯誤 token 字串永久凍結、新增為非破壞性、改名或刪除為破壞性變更並須取得 iOS 簽核
