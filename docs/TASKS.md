@@ -7,10 +7,10 @@
 （無）
 
 ## 待辦
-- [ ] **T16** `btrim` 只吃 ASCII 空白（正確性複核 MINOR）——`E'\t\n'` 與全角空格 U+3000
-  可建立便條，只有半角空白被 `content_empty` 擋。spec 未規定，但 CJK 使用者按到全角空白不罕見
 - [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
   ——等什麼：進入大量測試階段（2026-07-12 決定：開發期以本機 supabase 為主）
+  - locale 依賴（T16／ADR-0009）已由 migration 自己擋：ctype 不認得 Unicode 空白就
+    `db push` 失敗。**若部署時真的撞到這個例外**，退路是把 `\s` 換成顯式字元集的 `btrim`
 - [ ] **T3** UGC 檢舉機制（App Store 審查前必須；`report_note` RPC + 隱藏 flag）
 - [ ] **T4** 便條 TTL 政策（產品決策；技術上為 pg_cron 一句 delete）
 
@@ -18,6 +18,21 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T16** 全空白內容的判定改認 Unicode 空白
+  ✅ 2026-07-29：`supabase/migrations/20260729000000_unicode_whitespace_trim.sql`；
+  `btrim(p_content)` → `regexp_replace(p_content,'^\s+|\s+$','','g')`（`drop_note` 逐行比對
+  確認只動這一行）。**原描述講太寬**：單參數的 `btrim` 只剝 U+0020，連 tab 與換行都不剝。
+  red：tab-only 內容可建立；green：全形空白／tab／換行／CR／NBSP／混合皆 `content_empty`，
+  `　你好\n　` 存成 `你好`，多行中間的縮排保留（HTTP 端到端實測）。
+  決策記為 **ADR-0009**；契約跳 v3.2（openapi 同步 3.2.0）——行為變更但無新 token、無形狀改變。
+  **刻意不追的邊界釘進測試**：零寬空白／BOM 等格式字元不是 Unicode 空白，任何 trim 都攔不到，
+  分界是「意外 vs 刻意」，後者屬 T3 檢舉機制。
+  獨立正確性驗證 **PASS**（掃 35 個碼位、trim 與計數順序、既有行為、HTTP wire 全數通過）。
+  code-review 抓到兩項並修：①**我把一個會靜默失效的修正掛在延後票的人工檢查上**
+  ——`\s` 認不認得全形空白取決於 ctype，C locale 下整個修正無效。已改成 migration
+  套用時就驗、不支援即 `db push` 失敗；②文件宣稱字元集「等同各平台的 whitespaces and
+  newlines」**不精確**——PG 的 `\s` 多吃 U+001C–U+001F（非 Unicode White_Space，
+  也不在 Swift 字元集內），已照實寫出這個差異
 - [x] **T13** 私人便條無數量閘門（安全複核 MAJOR）
   ✅ 2026-07-28：`supabase/migrations/20260728090000_private_note_limit.sql`；
   旅遊紀錄絕對上限 **5000 張**（≈ 每天寫一張寫 13 年）＋ 新 token `private_note_limit`

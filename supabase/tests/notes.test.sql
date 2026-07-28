@@ -53,7 +53,7 @@ create function pg_temp.fixture_users() returns uuid[] language sql immutable as
     '00000000-0000-0000-0000-00000000000b',  -- B：作者
     '00000000-0000-0000-0000-00000000000c',  -- C：50 張上限測試
     '00000000-0000-0000-0000-00000000000d',  -- D：60 次/時上限測試
-    '00000000-0000-0000-0000-00000000000e',  -- E：style 代號測試
+    '00000000-0000-0000-0000-00000000000e',  -- E：style 代號 ＋ 內容正規化測試
     '00000000-0000-0000-0000-00000000000f',  -- F：私人便條測試
     '00000000-0000-0000-0000-000000000010'   -- G：私人便條絕對上限測試
   ]::uuid[]
@@ -107,7 +107,7 @@ declare r jsonb;
 begin
   r := public.drop_note('  hello from Tokyo  ', lat, lng);
   if r->>'content' <> 'hello from Tokyo' then
-    raise exception 'FAIL: btrim not applied, got %', r->>'content';
+    raise exception 'FAIL: 前後空白未被 trim, got %L', r->>'content';
   end if;
   -- v3 形狀：精確鍵集（不只是「有」，而是「只有」——白名單的價值在此）。
   -- uuid 身分欄位與 location 不得上 wire（T7），舊 snake_case 鍵也不得殘留。
@@ -141,7 +141,24 @@ end $$;
 
 -- 以下 expect_error 的座標一律寫 0, 0：這些呼叫必定被拒、不會建立便條，座標是什麼都不影響。
 -- 寫成明顯無意義的值，才不會被誤讀成「某個有來由的測試點」（真會建便條的都走 pg_temp.tlat）。
-select pg_temp.expect_error($$select public.drop_note('   ', 0, 0)$$, 'content_empty');
+-- 全空白的判定認完整的 Unicode 空白（T16）：只認半角空白的話，CJK 使用者按到全形空白鍵
+-- 就會留下一張看起來是空的便條，而兩側都不會有任何錯誤訊號。
+do $$
+declare v text;
+begin
+  foreach v in array array[
+    repeat(chr(32), 3),                       -- U+0020 半角空白
+    repeat(chr(9), 2),                        -- U+0009 tab
+    repeat(chr(10), 2),                       -- U+000A 換行
+    repeat(chr(13), 2),                       -- U+000D CR
+    repeat(chr(160), 2),                      -- U+00A0 NBSP
+    repeat(chr(12288), 2),                    -- U+3000 全形空白
+    chr(9) || chr(12288) || chr(32) || chr(10)  -- 混合
+  ] loop
+    perform pg_temp.expect_error(
+      format($q$select public.drop_note(%L, 0, 0)$q$, v), 'content_empty');
+  end loop;
+end $$;
 -- 附上限數字，旅人才知道要刪掉多少字（client 不必為了取得 500 去解析錯誤字串）
 select pg_temp.expect_error($$select public.drop_note(repeat('あ', 501), 0, 0)$$,
                             'content_too_long', '{"maxChars": 500}');
@@ -183,6 +200,24 @@ begin
   r := public.drop_note('unknown codes', elat, elng, 999, 32767);
   if (r->>'color')::int <> 999 or (r->>'style')::int <> 32767 then
     raise exception 'FAIL: out-of-table codes not accepted verbatim: %', r;
+  end if;
+
+  -- ── 內容正規化（T16）。借 E 的群組建便條：主群的 nearby 斷言數得很精確，不能污染 ──
+  -- trim 涵蓋全形空白與換行（單參數的 btrim 只剝 U+0020，這兩種都留得下來）
+  r := public.drop_note(chr(12288) || '你好' || chr(10) || chr(12288), elat, elng);
+  if r->>'content' <> '你好' then
+    raise exception 'FAIL: Unicode 空白未被 trim, got %L', r->>'content';
+  end if;
+  -- 但只咬字串頭尾：中間那行的縮排是內容的一部分，不得被咬掉
+  r := public.drop_note('第一行' || chr(10) || '  第二行', elat, elng);
+  if r->>'content' <> '第一行' || chr(10) || '  第二行' then
+    raise exception 'FAIL: 內部縮排被 trim 咬掉, got %L', r->>'content';
+  end if;
+  -- 已知邊界，刻意釘住：零寬空白 U+200B 與 BOM 在 Unicode 裡**不是空白**（格式字元 Cf），
+  -- 任何 trim 寫法都攔不住，所以「刻意的空白便條」擋不下來——修的是常見的意外，不是這個。
+  r := public.drop_note(chr(8203), elat, elng);
+  if r->>'content' <> chr(8203) then
+    raise exception 'FAIL: U+200B 應原樣保留（它不是空白）, got %L', r->>'content';
   end if;
 end $$;
 

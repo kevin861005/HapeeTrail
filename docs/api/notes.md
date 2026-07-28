@@ -124,12 +124,23 @@ curl -X POST "$BASE/rest/v1/rpc/drop_note" -H "apikey: $KEY" \
 - **字數規則**：伺服器以 **Unicode code point** 計 1–500（不是 grapheme——一個 emoji
   家族在使用者眼中是 1 個字，在伺服器可能是 7+ 個 code point）。client 預檢必須用
   code point 計數，否則會放行伺服器拒絕的內容。
+- **先 trim 再計數**，順序固定。只剝字串**頭尾**——多行內容中間那幾行的縮排是內容的
+  一部分，不會被動到。trim 後為空 → `content_empty`。
+- **trim 的字元集**＝Unicode 的 White_Space（半角空白、tab、換行、CR、NBSP、
+  全形空白 U+3000、各種 en/em space、U+2028/2029…）**再加上 U+001C–U+001F**
+  這四個 C0 資訊分隔符。前者與各平台慣用的「whitespaces and newlines」一致；
+  後者是 Postgres 的字元類別多涵蓋的，實務上打不出來，但**若 client 預檢用的是標準的
+  whitespace 字元集，這四個字元會出現「app 說可以送、伺服器回 `content_empty`」的分歧**。
+  ⚠️ **格式字元不算空白**：零寬空白（U+200B–200D）、word joiner（U+2060）、
+  BOM（U+FEFF）、U+180E 在 Unicode 裡是格式字元而非空白，因此不會被 trim、也不會被判為空
+  ——只由它們組成的便條建得起來。這是已知邊界：伺服器擋的是常見的**意外**
+  （例如按到全形空白鍵），不是刻意做出來的空白便條；後者屬檢舉機制的範圍。
 - **不冪等，勿盲目重試**：timeout 後直接重發會產生重複便條。正確流程：先查 my_notes
   確認是否已建立，沒有才補發。
 - `p_color`／`p_style` **可省略**（或給 null），此時伺服器補預設（皆為 `1`，指向對照表中的
   具體項目——不是一個「代表預設」的抽象槽）。兩者各自獨立，可以只給其中一個。
 - `p_audience` **可省略**（或給 null），此時為 `anyone`。不認得的值 → `invalid_audience`。
-- 回傳的 `content` 是伺服器 trim 後的正規版本，**client 應以它取代本地草稿**。
+- 回傳的 `content` 是伺服器 trim 後的正規版本，**client 應以它取代本地草稿**（否則本地顯示的字串會與伺服器存的不一致）。
 - **兩個上限各管各的**：未撿的**公開**便條上限 50 張（`active_note_limit`）；
   旅遊紀錄上限 5000 張（`private_note_limit`）。公開便條的額度算「未撿的」，被撿走就釋放；
   旅遊紀錄永遠不會被撿走，所以它的額度是絕對總量。兩者互不影響——公開便條滿了仍可繼續
@@ -281,6 +292,11 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 
 ## 11. Changelog
 
+- 2026-07-29 **v3.2**：`content` 的 trim 改認**完整的 Unicode 空白**（原本只剝半角空白
+  U+0020，連 tab 與換行都不剝）。於是只由全形空白、tab、換行、NBSP 組成的內容會被判為
+  `content_empty` 而不再建立便條；尾端的這類空白也會被剝掉，因此**回傳的 `content` 可能
+  與送出的不同**——請以回傳值為準。不新增 token、不改形狀。已知邊界：零寬空白與 BOM
+  不是 Unicode 空白，不受影響（見 §4）。
 - 2026-07-28 **v3.1**：旅遊紀錄新增絕對上限 5000 張與 `private_note_limit` token
   （附 `{"maxPrivateNotes": 5000}`）。在此之前旅遊紀錄完全沒有數量閘門——它不佔未撿額度、
   也永遠不會被撿走，於是單一帳號可以無限累積。**新增 token 為非破壞性變更**（依 §9，

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "3.1.0"
+  version: "3.2.0"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/trailstamp
@@ -87,7 +87,14 @@ paths:
                   type: string
                   minLength: 1
                   maxLength: 500
-                  description: 1–500 個 Unicode code point（伺服器先 btrim 再驗證）
+                  description: |
+                    1–500 個 Unicode code point。伺服器**先 trim 再計數**，只剝字串頭尾
+                    （多行內容中間的縮排不受影響），trim 後為空 → `content_empty`。
+                    回傳的 `content` 是 trim 後的版本，可能與送出的不同。
+                    字元集＝Unicode White_Space ＋ U+001C–U+001F（後者是 Postgres 字元類別
+                    多涵蓋的，實務上打不出來但與標準 whitespace 集有差異）。
+                    格式字元（U+200B–200D、U+2060、U+FEFF、U+180E）不算空白，
+                    不會被剝也不會被判為空。詳見 notes.md §4。
                 p_lat:
                   $ref: "#/components/schemas/Latitude"
                 p_lng:
