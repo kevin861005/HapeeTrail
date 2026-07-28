@@ -49,10 +49,10 @@ curl -X POST "$BASE/auth/v1/signup" -H "apikey: $KEY" \
 
 ## 3. 資料形狀
 
-**Note**（drop_note / pickup_note / my_notes / my_collection 共用同一 shape，恰好 5 鍵）：
+**Note**（drop_note / pickup_note / my_notes / my_collection 共用同一 shape，恰好 7 鍵）：
 
 ```json
-{ "id": "5f8f1c1e-…", "content": "神社後面的拉麵店超好吃",
+{ "id": "5f8f1c1e-…", "content": "神社後面的拉麵店超好吃", "color": 1, "style": 1,
   "coordinate": { "latitude": 35.6595, "longitude": 139.7005 },
   "createdAt": "2026-07-12T03:21:45.123456Z", "pickedUpAt": null }
 ```
@@ -63,22 +63,34 @@ curl -X POST "$BASE/auth/v1/signup" -H "apikey: $KEY" \
 - `coordinate` 是**投放位置**（第一階段不記錄撿起位置）。
 - 自己投放的便條 `pickedUpAt != null` ⇒ 已被人撿走——這是唯一的「被撿走」訊號。
 
-**NearbyHint**（僅 nearby_notes；刻意不含 content 與作者）：
+**NearbyHint**（僅 nearby_notes；刻意不含 content 與作者，但帶代號供地圖 pin 渲染）：
 
 ```json
-{ "id": "5f8f1c1e-…", "coordinate": { "latitude": 35.65977, "longitude": 139.7005 },
+{ "id": "5f8f1c1e-…", "color": 1, "style": 1,
+  "coordinate": { "latitude": 35.65977, "longitude": 139.7005 },
   "distanceM": 30, "pickable": true, "createdAt": "…" }
 ```
 
 回應鍵名一律 camelCase，且**縮寫視為普通單字**（`distanceM`；日後的 `photoUrl`
 不會是 `photoURL`）——此後新增欄位一律比照。
 
+**`color`／`style` 代號**（兩者各自獨立、從 1 起算的小整數）：
+
+- 色票與卡片樣式的**對照表在裝置端**，後端只儲存代號、不理解其語意——新增顏色或樣式
+  不需要後端 migration 或發版。
+- 因此後端**不驗證代號是否存在於對照表**：對照表裡沒有的代號照樣被接受、原樣儲存、
+  原樣回傳，且不會有任何錯誤訊號。**client 遇到未知代號一律渲染預設樣式**，
+  不得視為錯誤或顯示破圖。
+- 後端只做**範圍**粗檢：1–32767 以外的整數 → `invalid_style_code`（§8）。
+  非整數（`1.5`）或超出 32 位元整數的值屬**型別**錯誤，與其他參數同一模式
+  （如 `p_lat` 給字串），落在 §2 的第二層閘門，不是 `P0001`。
+
 ## 4. drop_note — 留便條
 
 ```bash
 curl -X POST "$BASE/rest/v1/rpc/drop_note" -H "apikey: $KEY" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"p_content":"神社後面的拉麵店超好吃","p_lat":35.6595,"p_lng":139.7005}'
+  -d '{"p_content":"神社後面的拉麵店超好吃","p_lat":35.6595,"p_lng":139.7005,"p_color":1,"p_style":1}'
 ```
 
 - **字數規則**：伺服器以 **Unicode code point** 計 1–500（不是 grapheme——一個 emoji
@@ -86,6 +98,8 @@ curl -X POST "$BASE/rest/v1/rpc/drop_note" -H "apikey: $KEY" \
   code point 計數，否則會放行伺服器拒絕的內容。
 - **不冪等，勿盲目重試**：timeout 後直接重發會產生重複便條。正確流程：先查 my_notes
   確認是否已建立，沒有才補發。
+- `p_color`／`p_style` **可省略**（或給 null），此時伺服器補預設（皆為 `1`，指向對照表中的
+  具體項目——不是一個「代表預設」的抽象槽）。兩者各自獨立，可以只給其中一個。
 - 回傳的 `content` 是伺服器 trim 後的正規版本，**client 應以它取代本地草稿**。
 - 每人未撿便條上限 50 張（`active_note_limit`）。
 
@@ -164,6 +178,7 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 | `invalid_coordinates` | drop/nearby/pickup | client bug，修 payload |
 | `invalid_cursor` | my_notes/my_collection | 游標無效或已過期格式，改從第一頁重新載入 |
 | `content_empty` / `content_too_long` | drop | 表單行內提示（1–500 code point） |
+| `invalid_style_code` | drop | client bug，修 payload（代號須落在 1–32767） |
 | `active_note_limit` | drop | 「等便條被撿走再留」（上限 50 張未撿） |
 | `note_not_found` | pickup | 移除 pin、刷新 |
 | `note_taken` | pickup | 「有人搶先一步」、移除 pin |
@@ -183,7 +198,10 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 
 ## 10. Changelog
 
-- 2026-07-28 **v3.0**（進行中，iOS 動工前一次到位）：wire format 改版（**breaking**）——
+- 2026-07-28 **v3.0**（進行中，iOS 動工前一次到位）：Note 與 NearbyHint 新增 `color`／`style`
+  兩個獨立代號（對照表在裝置端，後端只存代號；未知代號渲染預設樣式），drop_note 新增
+  兩個可省略參數 `p_color`／`p_style` 與 `invalid_style_code` token。
+  wire format 改版（**breaking**）——
   鍵名改 camelCase、座標改巢狀 `coordinate` 物件、時間戳格式固定為六位小數 ＋ `Z`、
   nearby_notes 改回傳 `{ "items": [...] }` envelope。
   兩支列表改回傳 `{ items, nextCursor }` envelope，分頁改**單一不透明游標** `p_cursor`

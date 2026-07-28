@@ -70,8 +70,9 @@ paths:
       description: |
         回傳建立的 Note（content 為 trim 後的正規版本，client 應以回傳值取代本地草稿）。
         ⚠️ 不冪等：timeout 後勿盲目重試，先以 my_notes 確認是否已建立。
+        `p_color`／`p_style` 可省略，省略時由伺服器補預設（皆為 `1`）。
         錯誤 token：`not_authenticated` `invalid_coordinates` `content_empty`
-        `content_too_long` `active_note_limit`
+        `content_too_long` `invalid_style_code` `active_note_limit`
       requestBody:
         required: true
         content:
@@ -89,10 +90,20 @@ paths:
                   $ref: "#/components/schemas/Latitude"
                 p_lng:
                   $ref: "#/components/schemas/Longitude"
+                p_color:
+                  allOf: [{ $ref: "#/components/schemas/StyleCode" }]
+                  default: 1
+                  description: 色票代號；省略或給 null ＝ 伺服器預設 1
+                p_style:
+                  allOf: [{ $ref: "#/components/schemas/StyleCode" }]
+                  default: 1
+                  description: 卡片樣式代號；省略或給 null ＝ 伺服器預設 1
             example:
               p_content: 神社後面的拉麵店超好吃
               p_lat: 35.6595
               p_lng: 139.7005
+              p_color: 1
+              p_style: 1
       responses:
         "200":
           description: 建立的便條
@@ -296,6 +307,18 @@ components:
         永遠六位小數、永遠 `Z`，不因秒數恰為整數而變動位數。
       pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$'
       example: "2026-07-12T03:21:45.123456Z"
+    StyleCode:
+      type: integer
+      minimum: 1
+      maximum: 32767
+      example: 1
+      description: |
+        裝置端對照表的項目代號（`color` ＝ 色票、`style` ＝ 卡片樣式），從 1 起算，
+        兩者是**各自獨立**的代號、不打包成單一數字。
+        **後端只儲存代號、不理解其語意**：對照表在裝置端，新增顏色或樣式不需要後端改版，
+        後端也因此不驗證代號是否存在於對照表——超出對照表範圍的值會被接受、原樣儲存、原樣回傳。
+        **client 遇到未知代號一律渲染預設樣式**，不得視為錯誤。
+        伺服器只做範圍粗檢，1–32767 之外 → `invalid_style_code`。
     Coordinate:
       type: object
       description: WGS-84 座標（回應端一律巢狀物件；請求端維持兩個扁平參數）
@@ -312,13 +335,19 @@ components:
         便條完整物件（drop_note / pickup_note / my_notes / my_collection 共用同一 shape）。
         不含任何 uuid 身分欄位（author_id/picked_up_by 不上 wire）——作者一律顯示為匿名旅人。
         鍵名為 camelCase，縮寫視為普通單字（日後的 `photoUrl` 不會是 `photoURL`）。
-      required: [id, content, coordinate, createdAt, pickedUpAt]
+      required: [id, content, color, style, coordinate, createdAt, pickedUpAt]
       properties:
         id:
           type: string
           format: uuid
         content:
           type: string
+        color:
+          allOf: [{ $ref: "#/components/schemas/StyleCode" }]
+          description: 作者選的色票代號（未知代號 → 渲染預設樣式）
+        style:
+          allOf: [{ $ref: "#/components/schemas/StyleCode" }]
+          description: 作者選的卡片樣式代號（未知代號 → 渲染預設樣式）
         coordinate:
           allOf: [{ $ref: "#/components/schemas/Coordinate" }]
           description: 投放位置（第一階段不記錄撿起位置）
@@ -345,12 +374,16 @@ components:
 
     NearbyHint:
       type: object
-      description: 探索 pin（刻意不含 content 與作者）
-      required: [id, coordinate, distanceM, pickable, createdAt]
+      description: 探索 pin（刻意不含 content 與作者；帶代號供地圖 pin 渲染成作者選的樣式）
+      required: [id, color, style, coordinate, distanceM, pickable, createdAt]
       properties:
         id:
           type: string
           format: uuid
+        color:
+          $ref: "#/components/schemas/StyleCode"
+        style:
+          $ref: "#/components/schemas/StyleCode"
         coordinate:
           $ref: "#/components/schemas/Coordinate"
         distanceM:
@@ -445,6 +478,7 @@ components:
             - invalid_cursor
             - content_empty
             - content_too_long
+            - invalid_style_code
             - active_note_limit
             - note_not_found
             - note_taken

@@ -17,7 +17,12 @@
     `ALL TESTS PASSED`、newman 11/11（含游標 HTTP 往返）、redocly lint 通過、
     EXPLAIN 掃描節點與變更前逐字相同。code-review 抓到並修掉一個實質缺陷：
     游標未帶排序鍵身分 ⇒ 跨列表混用會靜默回錯頁（證據與修正見 ticket 03）
-  - 下一步：對 04 跑 `/implement`
+  - 04 樣式代號 ✅ 2026-07-28：`supabase/migrations/20260728030000_style_codes.sql`；
+    `color`/`style` 兩個獨立 smallint（預設 1、可省略、超出對照表照收）、新增
+    `invalid_style_code` token（實作前取得同意）；`ALL TESTS PASSED`、newman 11/11、
+    redocly lint 通過、EXPLAIN 仍走 `notes_active_location_gix`；獨立 subagent 安全與
+    正確性複核無 CRITICAL/MAJOR（含併發實測），code-review 的 4 項已修（證據見 ticket 04）
+  - 下一步：對 05 跑 `/implement`
 
 ## 待辦
 - [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）

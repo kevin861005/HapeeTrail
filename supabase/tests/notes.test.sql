@@ -33,7 +33,8 @@ insert into auth.users (id) values
   ('00000000-0000-0000-0000-00000000000a'),  -- A：撿起者
   ('00000000-0000-0000-0000-00000000000b'),  -- B：作者
   ('00000000-0000-0000-0000-00000000000c'),  -- C：50 張上限測試
-  ('00000000-0000-0000-0000-00000000000d');  -- D：60 次/時上限測試
+  ('00000000-0000-0000-0000-00000000000d'),  -- D：60 次/時上限測試
+  ('00000000-0000-0000-0000-00000000000e');  -- E：style 代號測試（便條刻意遠離東京，不干擾 nearby）
 
 -- ─── drop_note：驗證與 trim ─────────────────────────────────────────────────
 select pg_temp.login('00000000-0000-0000-0000-00000000000b');
@@ -48,8 +49,12 @@ begin
   -- v3 形狀：精確鍵集（不只是「有」，而是「只有」——白名單的價值在此）。
   -- uuid 身分欄位與 location 不得上 wire（T7），舊 snake_case 鍵也不得殘留。
   if (select array_agg(k order by k) from jsonb_object_keys(r) k)
-     <> array['content','coordinate','createdAt','id','pickedUpAt'] then
+     <> array['color','content','coordinate','createdAt','id','pickedUpAt','style'] then
     raise exception 'FAIL: unexpected JSON shape %', r;
+  end if;
+  -- 兩個代號皆可省略；預設值指向對照表中的具體項目（1 ＝ 現行黃色），不是抽象的「預設槽」
+  if (r->>'color')::int <> 1 or (r->>'style')::int <> 1 then
+    raise exception 'FAIL: default style codes %', r;
   end if;
   -- 座標為巢狀物件
   if (select array_agg(k order by k) from jsonb_object_keys(r->'coordinate') k)
@@ -75,10 +80,42 @@ select pg_temp.expect_error($$select public.drop_note('x', 35.6595, null)$$, 'in
 -- 500 字元恰好合法（char_length 算 code point）
 do $$ begin perform public.drop_note(repeat('あ', 500), 35.66200, 139.7005); end $$;
 
--- B 再放一張 70m 處的便條（nearby 可見但不可撿）
-do $$ begin perform public.drop_note('at 70m', 35.66013090, 139.7005); end $$;
+-- B 再放一張 70m 處的便條（nearby 可見但不可撿）；刻意給非預設代號，驗證它一路走到 wire
+do $$ begin perform public.drop_note('at 70m', 35.66013090, 139.7005, 7, 3); end $$;
 -- B 放一張 130m 處的便條（nearby 不可見）
 do $$ begin perform public.drop_note('at 130m', 35.66067167, 139.7005); end $$;
+
+-- ─── style 代號：預設、可省略、互不干擾、超出對照表範圍照收 ─────────────────
+-- 後端只存代號、不理解語意（對照表在裝置端）⇒ 超範圍的值必須原樣存、原樣回，且無錯誤訊號
+reset role;
+select pg_temp.login('00000000-0000-0000-0000-00000000000e');
+do $$
+declare r jsonb;
+begin
+  -- 兩欄位各自獨立：給不同值不得互換、不得被打包成單一數字
+  r := public.drop_note('codes', 10.0, 10.0, 7, 3);
+  if (r->>'color')::int <> 7 or (r->>'style')::int <> 3 then
+    raise exception 'FAIL: explicit codes not round-tripped: %', r;
+  end if;
+  -- 只給一個，另一個補伺服器預設
+  r := public.drop_note('color only', 10.0, 10.0, 9);
+  if (r->>'color')::int <> 9 or (r->>'style')::int <> 1 then
+    raise exception 'FAIL: partial codes: %', r;
+  end if;
+  -- 超出裝置端對照表的代號：照收（後端不維護第二份合法值清單）
+  r := public.drop_note('unknown codes', 10.0, 10.0, 999, 32767);
+  if (r->>'color')::int <> 999 or (r->>'style')::int <> 32767 then
+    raise exception 'FAIL: out-of-table codes not accepted verbatim: %', r;
+  end if;
+end $$;
+
+-- 粗檢只擋型別與範圍（非正整數、超出 smallint），不擋語意
+select pg_temp.expect_error($$select public.drop_note('x', 10.0, 10.0, 0, 1)$$, 'invalid_style_code');
+select pg_temp.expect_error($$select public.drop_note('x', 10.0, 10.0, 1, -1)$$, 'invalid_style_code');
+select pg_temp.expect_error($$select public.drop_note('x', 10.0, 10.0, 32768, 1)$$, 'invalid_style_code');
+
+reset role;
+select pg_temp.login('00000000-0000-0000-0000-00000000000b');
 
 -- ─── nearby_notes：半徑、排序、pickable、排除自己 ──────────────────────────
 -- B 自己查：自己的便條一律不出現
@@ -108,7 +145,7 @@ begin
     i := i + 1;
     -- 提示的精確鍵集：不含 content 與任何作者資訊
     if (select array_agg(k order by k) from jsonb_object_keys(h) k)
-       <> array['coordinate','createdAt','distanceM','id','pickable'] then
+       <> array['color','coordinate','createdAt','distanceM','id','pickable','style'] then
       raise exception 'FAIL: unexpected hint shape %', h;
     end if;
     if (select array_agg(k order by k) from jsonb_object_keys(h->'coordinate') k)
@@ -118,10 +155,13 @@ begin
     if (h->>'createdAt') !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$' then
       raise exception 'FAIL: hint createdAt format %', h->>'createdAt';
     end if;
-    if i = 1 and not ((h->>'distanceM')::int <= 5 and (h->>'pickable')::boolean) then
+    -- 地圖 pin 要拿作者當初選的代號才渲染得出對應樣式（預設 1/1 與非預設 7/3 各一張）
+    if i = 1 and not ((h->>'distanceM')::int <= 5 and (h->>'pickable')::boolean
+                      and (h->>'color')::int = 1 and (h->>'style')::int = 1) then
       raise exception 'FAIL: nearest row wrong: %', h;
     end if;
-    if i = 2 and not ((h->>'distanceM')::int between 60 and 80 and not (h->>'pickable')::boolean) then
+    if i = 2 and not ((h->>'distanceM')::int between 60 and 80 and not (h->>'pickable')::boolean
+                      and (h->>'color')::int = 7 and (h->>'style')::int = 3) then
       raise exception 'FAIL: 70m row wrong: %', h;
     end if;
   end loop;
@@ -335,6 +375,11 @@ declare p jsonb := public.my_notes(29);
 begin
   if jsonb_array_length(p->'items') <> 29 or p->'nextCursor' <> 'null'::jsonb then
     raise exception 'FAIL: exact-fit page should end pagination, nextCursor = %', p->'nextCursor';
+  end if;
+  -- 代號走完整條路徑：列表拿到的是作者當初選的值，不是預設
+  if (select count(*) from jsonb_array_elements(p->'items') n
+      where n->>'content' = 'at 70m' and (n->>'color')::int = 7 and (n->>'style')::int = 3) <> 1 then
+    raise exception 'FAIL: style codes lost in my_notes';
   end if;
 end $$;
 
