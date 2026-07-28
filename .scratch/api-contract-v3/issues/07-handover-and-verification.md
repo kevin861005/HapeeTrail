@@ -13,6 +13,10 @@
 - [ ] 該文件載明此表由 iOS 維護，後端不實作、不驗證、不做同步檢查
 - [ ] 語意文件新增「未知值政策」一節：未知欄位忽略、未知 enum 值與未知代號一律走預設
 - [ ] 三份契約產出（OpenAPI 規格、語意文件、Postman collection）彼此一致，無殘留的舊格式說明
+- [ ] 語意文件的「契約外路徑」段補上 `as_note_wire` computed column（T11-01 引入）：`authenticated`
+      可經 PostgREST 以 `notes?select=…,as_note_wire` 取得白名單化的便條形狀。RLS 仍生效（只看得到
+      自己寫的或自己撿的列）、anon 不可達，未擴大讀取面；但既然該段的用途就是揭露契約以外讀得到什麼，
+      它必須被列出來。若 T11-02～06 又新增類似的 computed column，一併補上
 - [ ] 語意文件維持語言中立，不含任何 client 語言程式碼
 - [ ] Postman collection 依資料夾順序執行即為完整流程、token 由 script 自動帶入的既有設計維持；newman 全綠
 - [ ] 契約變更政策段落更新：錯誤 token 字串永久凍結、新增為非破壞性、改名或刪除為破壞性變更並須取得 iOS 簽核
