@@ -391,12 +391,16 @@ begin
 end $$;
 
 -- 作者撿自己的 → own_note；亂 uuid → note_not_found
+-- id 一律以 postgres 身分先存進 GUC：T12 之後 client 角色對資料表沒有任何權限，
+-- 登入狀態下直讀會 permission denied（這正是本次要達成的效果）
 reset role;
+select set_config('test.own_id',
+  (select id::text from public.notes
+    where content = 'at 70m' and author_id = any(pg_temp.fixture_users())), true);
 select pg_temp.login('00000000-0000-0000-0000-00000000000b');
 do $$
-declare v_id uuid;
+declare v_id uuid := current_setting('test.own_id')::uuid;
 begin
-  select n.id into v_id from public.notes n where n.content = 'at 70m';
   perform pg_temp.expect_error(
     format($q$select public.pickup_note('%s', %s, %s)$q$, v_id,
            pg_temp.tlat(0.00063090), pg_temp.tlng()), 'own_note');
@@ -418,29 +422,21 @@ begin
   if c <> 0 then raise exception 'FAIL: picked note still in nearby'; end if;
 end $$;
 
--- ─── RLS：只能直讀自己寫的或自己撿的 ────────────────────────────────────────
+-- ─── 資料表對 client 完全不可達（T12）───────────────────────────────────────
+-- 五支契約 RPC 全是 SECURITY DEFINER，沒有任何一支需要 client 角色摸得到 public.notes。
+-- 收回表權限之後，author_id／picked_up_by／location 這些不上 wire 的欄位就沒有任何
+-- client 路徑讀得到——在此之前，便條作者直讀自己的列即可取得撿走它的人的 auth.users.id。
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000a');
-do $$
-declare c int;
-begin
-  select count(*) into c from public.notes;
-  if c <> 1 then raise exception 'FAIL: A should see exactly 1 row (the picked note), got %', c; end if;
-  select count(*) into c from public.notes where picked_up_by = (select auth.uid());
-  if c <> 1 then raise exception 'FAIL: A collection count %', c; end if;
-end $$;
-
+select pg_temp.expect_error($$select count(*) from public.notes$$, 'permission denied%');
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000b');
-do $$
-declare c int;
-begin
-  -- B 是 29 張的作者（4 張 RPC drop：hello/500字/70m/130m + 25 張 bulk），全部可見（含被撿走那張）
-  select count(*) into c from public.notes;
-  if c <> 29 then raise exception 'FAIL: B should see 29 own rows, got %', c; end if;
-end $$;
+select pg_temp.expect_error($$select count(*) from public.notes$$, 'permission denied%');
+-- 作者連自己那列都讀不到 ⇒ 撿起者的 uuid 沒有外洩路徑
+select pg_temp.expect_error(
+  $$select picked_up_by from public.notes$$, 'permission denied%');
 
--- INSERT/UPDATE/DELETE 無任何直接路徑
+-- INSERT/UPDATE/DELETE 同樣無任何直接路徑
 select pg_temp.expect_error(
   $$insert into public.notes (author_id, content, lat, lng)
     values ('00000000-0000-0000-0000-00000000000b', 'direct', 0, 0)$$,
@@ -448,10 +444,16 @@ select pg_temp.expect_error(
 select pg_temp.expect_error($$update public.notes set content = 'x'$$, 'permission denied%');
 select pg_temp.expect_error($$delete from public.notes$$, 'permission denied%');
 
--- distance_m 不授權給任何 client 角色：兩支呼叫端都是 SECURITY DEFINER，它不需要上檯面。
--- 授權了就等於在契約外多開一支 RPC（as_wire_ts／as_cursor 是兩支 SECURITY INVOKER
--- 列表逼出來的例外，這支沒有那個理由）
+-- 內部 helper 一律不授權給 client 角色：五支契約 RPC 都是 DEFINER，以擁有者身分呼叫它們，
+-- client 不需要、也不該摸得到。（T12 之前 as_note_wire/as_wire_ts/as_cursor/parse_cursor
+-- 因為兩支列表是 SECURITY INVOKER 而被迫授權，那個理由已隨本次改動消失。）
 select pg_temp.expect_error($$select public.distance_m(null, null)$$, 'permission denied%');
+select pg_temp.expect_error($$select public.as_wire_ts(now())$$, 'permission denied%');
+select pg_temp.expect_error($$select public.as_cursor('created_at', now(), gen_random_uuid())$$,
+                            'permission denied%');
+select pg_temp.expect_error($$select * from public.parse_cursor('x', 'created_at')$$,
+                            'permission denied%');
+select pg_temp.expect_error($$select public.as_note_wire(null::public.notes)$$, 'permission denied%');
 
 -- anon role 完全不可達
 reset role;
@@ -550,9 +552,11 @@ begin
   if r->>'id' <> v_ids[1]::text then
     raise exception 'FAIL: 頻率閘門下的冪等重試沒回原便條, got %', r;
   end if;
-  if r->>'pickedUpAt' <> public.as_wire_ts(v_was) then
-    raise exception 'FAIL: 冪等重試改寫了 pickedUpAt: was %, got %',
-      public.as_wire_ts(v_was), r->>'pickedUpAt';
+  -- 把 wire 值轉回 timestamptz 再比，不呼叫 as_wire_ts——T12 之後 client 角色沒有它的執行權，
+  -- 而且斷言的本意是「時間戳沒被改寫」，不是「格式化函式怎麼寫」。
+  -- 固定六位小數 ＝ timestamptz 的完整精度，這個往返無損。
+  if (r->>'pickedUpAt')::timestamptz <> v_was then
+    raise exception 'FAIL: 冪等重試改寫了 pickedUpAt: was %, got %', v_was, r->>'pickedUpAt';
   end if;
   perform pg_temp.expect_error(
     format($q$select public.pickup_note('%s', %s, %s)$q$, v_ids[61], dlat, dlng),

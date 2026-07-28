@@ -7,11 +7,6 @@
 （無）
 
 ## 待辦
-- [ ] **T12** 撿起者 uuid 經直讀路徑外洩給便條作者（安全複核 MAJOR）
-  ——RLS `author_id = uid OR picked_up_by = uid` ＋ 表有 SELECT grant，作者直讀自己的便條
-  即取得撿走它的人的 `auth.users.id`。非 T11 引入（2026-07-12 結構性取捨）、`notes.md` §10 有揭露，
-  但 T7 移除 uuid 的理由對這條路徑同樣成立。**須先決定要不要收**（欄位級 grant 曾因 INVOKER
-  函式的 WHERE 撞權限而否決，見 `20260712010000_my_lists.sql:83-85`）
 - [ ] **T13** 私人便條無數量閘門（安全複核 MAJOR）——實測單帳號連建 200 張全成功，
   之後仍可留滿 50 張公開便條。spec 明文接受此天花板，但其論證支持的是「更高的上限」
   而非「沒有上限」；補一個寬鬆的絕對上限即可關掉
@@ -26,6 +21,23 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T12** 撿起者 uuid 經直讀路徑外洩給便條作者（安全複核 MAJOR）
+  ✅ 2026-07-28：`supabase/migrations/20260728080000_close_direct_read.sql`；
+  兩支列表 RPC 改 SECURITY DEFINER（各只動 3 行，機械 diff 確認函式邏輯零改動），
+  然後 `revoke all on table public.notes from anon, authenticated`，並收回四支 helper
+  對 client 角色的執行權——它們被授權的唯一理由就是「兩支 INVOKER 列表需要」，理由已消失。
+  決策與取捨升級為 **ADR-0007**（推翻 spec「兩支列表維持 INVOKER」那一條）。
+  效果：`GET /rest/v1/notes` 任何變體 403、helper 以正確簽名呼叫 403、根路徑只剩五支契約 RPC
+  且 `notes` 欄位定義清空；**契約零變更**（參數／回傳／錯誤 token 全同，iOS 不必改）。
+  獨立安全審查 **PASS**：偽造 10 年後的合法游標餵給無便條的使用者仍回 0 筆、`p_limit` 極端值
+  全被夾住、JWT claims 五種變形全 fail-closed、竄改 search_path 無效、service_role/postgres 未受影響。
+  `ALL TESTS PASSED`、newman 15/15、redocly lint 通過。
+  code-review 抓到三項並已修：缺 ADR、不該跳版號（wire 零變更卻讓 notes.md 跳 v3.1 而 openapi
+  停在 3.0.0）、**§10 寫的 404 是錯的事實**（我原本對 helper 一律送 `{}`，那是 PGRST202 找不到
+  簽名；用正確簽名重測全部是 403 / 42501）。
+  留下的已知缺口寫進 ADR 與 migration：RLS policy 保留但休眠且無測試覆蓋（重開表權限前須補測）；
+  Supabase 的 default privileges 會讓日後 drop＋create 的函式靜默重新被授權——本次收回的每一支
+  都有 `permission denied` 正面斷言守著，但新增的**表**沒有同等覆蓋
 - [x] **T18** 測試座標改成每次隨機（關掉 T17 留下的天花板）
   ✅ 2026-07-28：`supabase/tests/notes.test.sql`；新增 `pg_temp.tlat(位移)`／`pg_temp.tlng()`，
   **所有會建立便條的座標一律經此取得**，各使用者的便條群以整數度緯度隔開

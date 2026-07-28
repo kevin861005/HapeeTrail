@@ -258,43 +258,30 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 
 ## 10. 契約外路徑（讀了也別依賴）
 
-以下都是技術上摸得到、但**不屬於契約**的東西。列出來是為了誠實揭露「契約以外還讀得到什麼」，
-不是邀請使用；後端可能隨時收緊或收回而不另行通知。一律使用上述 RPC。
+**資料表對 client 完全不可達。** `GET /rest/v1/notes` 與任何 `select=` 變體一律 403，
+寫入面（POST／PATCH／DELETE）同樣 403，`anon` 得 401。五支契約 RPC 全是 SECURITY DEFINER，
+沒有一支需要 client 摸得到資料表，因此 `author_id`／`picked_up_by`／`location` 這些不上 wire
+的欄位**沒有任何 client 路徑讀得到**。內部 helper（時間戳格式化、游標編解碼、wire 形狀建構、
+距離計算）同樣不授權給任何 client 角色：它們不出現在 PostgREST 的路徑清單裡，直接以正確簽名
+呼叫則得 403（`42501 permission denied for function …`）——存在看得出來，但呼叫不動。
 
-- **`GET /rest/v1/notes` 直讀**（v1 曾使用）。RLS 限制只能讀到自己寫的或自己撿的列，
-  寫入面全關（POST／PATCH／DELETE 皆 403）。回傳形狀與 RPC 不同，欄位為資料表原貌的
-  12 個：`id` `author_id` `content` `lat` `lng` `location` `created_at` `picked_up_by`
-  `picked_up_at` `color` `style` `audience`——比契約多出 `author_id`、`picked_up_by`
-  兩個 uuid 身分欄位與 `location`（PostGIS WKB），時間戳是 Postgres 原生格式而非 §3 的
-  固定格式，座標是扁平的 `lat`／`lng`。上限規則也不同（RPC 的筆數上限不適用）。
-- **`as_note_wire`**：白名單化的便條形狀，兩種摸法——
-  computed column（`GET /rest/v1/notes?select=id,as_note_wire`）與
-  RPC（`POST /rest/v1/rpc/as_note_wire`）。前者 RLS 仍生效（只看得到自己寫的或自己撿的列），
-  未擴大任何讀取面——讀到的是上一條本來就讀得到的那些列，只是形狀不同；
-  後者只是把呼叫者自己餵進去的東西換個形狀吐回來，不碰資料表。
-- **`POST /rest/v1/rpc/as_wire_ts`**：時間戳格式化。純字串運算、不碰任何資料。
-- **`POST /rest/v1/rpc/as_cursor`**、**`POST /rest/v1/rpc/parse_cursor`**：游標編解碼。
-  純字串運算、不碰任何資料——`as_cursor` 只編呼叫者自己給的輸入，
-  `parse_cursor` 只解呼叫者自己手上的游標，兩者都不查表、不授予任何權限。
-  （偽造一個格式完全合法、指向別人資料的游標也讀不到東西：列表查詢的範圍由 RLS 決定，
-  游標只決定起點。）
-- **`GET /rest/v1/` 根路徑**：PostgREST 自動產生的 schema 列表。以 `authenticated`
-  呼叫會列出上述全部路徑與 `notes` 的 12 個欄位定義；`anon` 呼叫得到的是空清單
-  （只有 `/` 本身），看不到任何表或函式。
-- **上述函式多數另有 GET 形式**：凡是 STABLE 的都可以 `GET /rest/v1/rpc/{fn}?參數=…` 呼叫——
-  包含 `nearby_notes`／`my_notes`／`my_collection` 三支契約 RPC，以及四支 helper
-  （`as_note_wire`／`as_wire_ts`／`as_cursor`／`parse_cursor`）。只有 `drop_note`／`pickup_note`
-  是 VOLATILE，GET 得 405。**契約只承認 POST**——GET 形式會把座標與游標寫進 URL，
-  因而進到存取日誌與各層 proxy 的快取，請不要用。
+技術上摸得到、但仍**不屬於契約**的只剩兩件，列出來是為了誠實，不是邀請使用：
 
-三支 helper（`as_wire_ts`／`as_cursor`／`parse_cursor`）之所以被 `authenticated` 呼叫得到，
-是因為兩支列表 RPC 是 SECURITY INVOKER、需要以呼叫者身分執行它們。它們沒有安全影響，
-但「沒有安全影響」不是從揭露清單裡漏掉的理由。
-（距離計算的 `distance_m` 不在此列——它沒有授權給任何 client 角色，
-`authenticated` 呼叫得到 403、`anon` 得到 401，也不出現在上述根路徑的清單中。）
+- **`GET /rest/v1/` 根路徑**：PostgREST 自動產生的清單。以 `authenticated` 呼叫會列出
+  上述五支 RPC 的路徑與參數（也就是本契約本身，沒有多的）；`anon` 呼叫得到的是空清單。
+- **三支 RPC 另有 GET 形式**：`nearby_notes`／`my_notes`／`my_collection` 是 STABLE，
+  所以 `GET /rest/v1/rpc/{fn}?p_lat=…` 也會成功（`drop_note`／`pickup_note` 是 VOLATILE，
+  GET 得 405）。**契約只承認 POST**——GET 形式會把座標與游標寫進 URL，因而進到存取日誌
+  與各層 proxy 的快取，請不要用。
 
 ## 11. Changelog
 
+- 2026-07-28（**非契約變更**，故不跳版號）：**資料表的直讀路徑整個關閉**
+  （`GET /rest/v1/notes` 由「RLS 限自己的列」變成一律 403），內部 helper 也全部收回執行權。
+  在此之前，便條作者直讀自己那一列即可取得 `picked_up_by` ＝ 撿走它的人的 `auth.users.id`
+  ——契約層早已把 uuid 從 wire 上拿掉（v2.1），這條路徑補上同一個決定。
+  **五支 RPC 的參數、回傳形狀、錯誤 token 全部不變，iOS 不需要改任何東西**；
+  受影響的只有 §10 的揭露清單（大幅縮水）。決策理由見 ADR-0007。
 - 2026-07-28 **v3.0**（iOS 動工前一次到位）：新增 §9「未知值政策」（未知欄位忽略、
   未知 enum 值與未知代號走預設；請求端 `p_audience` 是唯一例外，不認得即拒絕）——
   有了它，此後絕大多數新增都是非破壞性變更。新增
