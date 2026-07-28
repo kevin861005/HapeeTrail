@@ -34,7 +34,8 @@ insert into auth.users (id) values
   ('00000000-0000-0000-0000-00000000000b'),  -- B：作者
   ('00000000-0000-0000-0000-00000000000c'),  -- C：50 張上限測試
   ('00000000-0000-0000-0000-00000000000d'),  -- D：60 次/時上限測試
-  ('00000000-0000-0000-0000-00000000000e');  -- E：style 代號測試（便條刻意遠離東京，不干擾 nearby）
+  ('00000000-0000-0000-0000-00000000000e'),  -- E：style 代號測試（便條刻意遠離東京，不干擾 nearby）
+  ('00000000-0000-0000-0000-00000000000f');  -- F：私人便條測試（同上，另一個遠離的座標）
 
 -- ─── drop_note：驗證與 trim ─────────────────────────────────────────────────
 select pg_temp.login('00000000-0000-0000-0000-00000000000b');
@@ -49,12 +50,16 @@ begin
   -- v3 形狀：精確鍵集（不只是「有」，而是「只有」——白名單的價值在此）。
   -- uuid 身分欄位與 location 不得上 wire（T7），舊 snake_case 鍵也不得殘留。
   if (select array_agg(k order by k) from jsonb_object_keys(r) k)
-     <> array['color','content','coordinate','createdAt','id','pickedUpAt','style'] then
+     <> array['audience','color','content','coordinate','createdAt','id','pickedUpAt','style'] then
     raise exception 'FAIL: unexpected JSON shape %', r;
   end if;
   -- 兩個代號皆可省略；預設值指向對照表中的具體項目（1 ＝ 現行黃色），不是抽象的「預設槽」
   if (r->>'color')::int <> 1 or (r->>'style')::int <> 1 then
     raise exception 'FAIL: default style codes %', r;
+  end if;
+  -- audience 亦可省略，預設為給任何人撿
+  if r->>'audience' <> 'anyone' then
+    raise exception 'FAIL: default audience %', r;
   end if;
   -- 座標為巢狀物件
   if (select array_agg(k order by k) from jsonb_object_keys(r->'coordinate') k)
@@ -113,6 +118,67 @@ end $$;
 select pg_temp.expect_error($$select public.drop_note('x', 10.0, 10.0, 0, 1)$$, 'invalid_style_code');
 select pg_temp.expect_error($$select public.drop_note('x', 10.0, 10.0, 1, -1)$$, 'invalid_style_code');
 select pg_temp.expect_error($$select public.drop_note('x', 10.0, 10.0, 32768, 1)$$, 'invalid_style_code');
+
+-- ─── 私人便條（audience）：不進他人探索、他人撿不到、不佔上限 ─────────────────
+-- F 在同一點放兩張：一張公開、一張旅遊紀錄。過濾若失效，E 的探索會看到兩張——
+-- 刻意不用「只放私人便條、斷言探索為空」，那種測試在整支查詢壞掉時也會綠。
+reset role;
+select pg_temp.login('00000000-0000-0000-0000-00000000000f');
+do $$
+declare r jsonb;
+begin
+  perform public.drop_note('public at 20,20', 20.0, 20.0);
+  r := public.drop_note('journal at 20,20', 20.0, 20.0, p_audience => 'self');
+  if r->>'audience' <> 'self' then
+    raise exception 'FAIL: audience not round-tripped: %', r;
+  end if;
+end $$;
+
+-- 不合法的值一律大聲失敗：靜默走預設會把旅人以為私密的便條變成公開的
+select pg_temp.expect_error(
+  $$select public.drop_note('x', 20.0, 20.0, p_audience => 'public')$$, 'invalid_audience');
+select pg_temp.expect_error(
+  $$select public.drop_note('x', 20.0, 20.0, p_audience => 'SELF')$$, 'invalid_audience');
+select pg_temp.expect_error(
+  $$select public.drop_note('x', 20.0, 20.0, p_audience => '')$$, 'invalid_audience');
+
+-- 私人便條的 id：RLS 下 E 看不到，先以 postgres 身分存起來（否則測試會變成空測）
+reset role;
+select set_config('test.journal_id',
+  (select id::text from public.notes where content = 'journal at 20,20'), true);
+
+select pg_temp.login('00000000-0000-0000-0000-00000000000e');
+do $$
+declare r jsonb := public.nearby_notes(20.0, 20.0);
+begin
+  if jsonb_array_length(r->'items') <> 1
+     or r->'items'->0->>'id' = current_setting('test.journal_id') then
+    raise exception 'FAIL: private note leaked into nearby: %', r;
+  end if;
+  -- 他人撿私人便條 → note_not_found。不新增「這是私人便條」的 token：
+  -- 那等於向外人確認該座標存在一張他看不到的便條
+  perform pg_temp.expect_error(
+    format($q$select public.pickup_note('%s', 20.0, 20.0)$q$, current_setting('test.journal_id')),
+    'note_not_found');
+end $$;
+
+reset role;
+select pg_temp.login('00000000-0000-0000-0000-00000000000f');
+do $$
+declare p jsonb := public.my_notes();
+begin
+  -- 作者自己撿 → own_note；對自己的便條沒有隱藏的必要（也不會有 UI 走到這）
+  perform pg_temp.expect_error(
+    format($q$select public.pickup_note('%s', 20.0, 20.0)$q$, current_setting('test.journal_id')),
+    'own_note');
+  -- 私人便條正常出現在自己的列表，且列表分得出哪些是旅遊紀錄
+  if (select count(*) from jsonb_array_elements(p->'items') n
+      where n->>'content' = 'journal at 20,20' and n->>'audience' = 'self') <> 1
+     or (select count(*) from jsonb_array_elements(p->'items') n
+         where n->>'content' = 'public at 20,20' and n->>'audience' = 'anyone') <> 1 then
+    raise exception 'FAIL: my_notes audience %', p;
+  end if;
+end $$;
 
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000b');
@@ -289,11 +355,17 @@ reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000c');
 do $$
 begin
+  -- 先放 3 張旅遊紀錄：上限若誤計私人便條，下面第 48 張公開便條就會被擋
+  for i in 1..3 loop
+    perform public.drop_note('journal ' || i, 35.0, 135.0, p_audience => 'self');
+  end loop;
   for i in 1..50 loop
     perform public.drop_note('cap ' || i, 35.0 + i * 0.001, 135.0);
   end loop;
   perform pg_temp.expect_error(
     $q$select public.drop_note('cap 51', 35.1, 135.0)$q$, 'active_note_limit');
+  -- 公開便條已滿，旅遊紀錄仍可繼續——這正是把私人便條排除在上限外的理由
+  perform public.drop_note('journal after cap', 35.1, 135.0, p_audience => 'self');
 end $$;
 
 -- D：一小時內第 61 次撿取 → pickup_rate_limited

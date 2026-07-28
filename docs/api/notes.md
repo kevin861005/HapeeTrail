@@ -49,11 +49,11 @@ curl -X POST "$BASE/auth/v1/signup" -H "apikey: $KEY" \
 
 ## 3. 資料形狀
 
-**Note**（drop_note / pickup_note / my_notes / my_collection 共用同一 shape，恰好 7 鍵）：
+**Note**（drop_note / pickup_note / my_notes / my_collection 共用同一 shape，恰好 8 鍵）：
 
 ```json
 { "id": "5f8f1c1e-…", "content": "神社後面的拉麵店超好吃", "color": 1, "style": 1,
-  "coordinate": { "latitude": 35.6595, "longitude": 139.7005 },
+  "audience": "anyone", "coordinate": { "latitude": 35.6595, "longitude": 139.7005 },
   "createdAt": "2026-07-12T03:21:45.123456Z", "pickedUpAt": null }
 ```
 
@@ -85,12 +85,28 @@ curl -X POST "$BASE/auth/v1/signup" -H "apikey: $KEY" \
   非整數（`1.5`）或超出 32 位元整數的值屬**型別**錯誤，與其他參數同一模式
   （如 `p_lat` 給字串），落在 §2 的第二層閘門，不是 `P0001`。
 
+**`audience` — 誰撿得到**（`anyone`｜`self`）：
+
+| | `anyone`（預設） | `self`（旅遊紀錄） |
+|---|---|---|
+| 別人的 nearby_notes | 出現 | **不出現** |
+| 自己的 nearby_notes | 不出現（自己的 pin 一律由 my_notes 疊圖） | 不出現 |
+| 別人 pickup_note | 走進 50m 可撿走 | **`note_not_found`** |
+| 自己的 my_notes | 出現 | 出現 |
+| my_collection | 撿到才出現 | 永遠不會出現（撿不走） |
+| 未撿便條上限 50 張 | 計入且受限 | **不計入、也不受限** |
+
+- 私人便條對外人的回應與**不存在的便條完全相同**（`note_not_found`）——刻意不另設
+  「這是私人便條」的錯誤，那等於向外人確認該座標存在一張他看不到的便條。
+- 這個欄位與 `color`／`style` 相反：**後端理解它並據以過濾**，因此不認得的值會被
+  拒絕（`invalid_audience`）而不是走預設——靜默走預設會把使用者以為私密的便條變成公開的。
+
 ## 4. drop_note — 留便條
 
 ```bash
 curl -X POST "$BASE/rest/v1/rpc/drop_note" -H "apikey: $KEY" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"p_content":"神社後面的拉麵店超好吃","p_lat":35.6595,"p_lng":139.7005,"p_color":1,"p_style":1}'
+  -d '{"p_content":"神社後面的拉麵店超好吃","p_lat":35.6595,"p_lng":139.7005,"p_color":1,"p_style":1,"p_audience":"anyone"}'
 ```
 
 - **字數規則**：伺服器以 **Unicode code point** 計 1–500（不是 grapheme——一個 emoji
@@ -100,8 +116,10 @@ curl -X POST "$BASE/rest/v1/rpc/drop_note" -H "apikey: $KEY" \
   確認是否已建立，沒有才補發。
 - `p_color`／`p_style` **可省略**（或給 null），此時伺服器補預設（皆為 `1`，指向對照表中的
   具體項目——不是一個「代表預設」的抽象槽）。兩者各自獨立，可以只給其中一個。
+- `p_audience` **可省略**（或給 null），此時為 `anyone`。不認得的值 → `invalid_audience`。
 - 回傳的 `content` 是伺服器 trim 後的正規版本，**client 應以它取代本地草稿**。
-- 每人未撿便條上限 50 張（`active_note_limit`）。
+- 每人未撿的**公開**便條上限 50 張（`active_note_limit`）。旅遊紀錄不計入此上限，
+  也不受它擋下——公開便條滿了仍可繼續記錄旅程。
 
 ## 5. nearby_notes — 100m 提示
 
@@ -114,6 +132,7 @@ curl -X POST "$BASE/rest/v1/rpc/nearby_notes" -H "apikey: $KEY" \
 - 回傳 `{ "items": [ … ] }`，≤20 筆、最近優先；無結果為空陣列（不會是 null）；截斷不另行標示。
   結果包成物件而非裸陣列，日後在 envelope 上加欄位才不是破壞性變更。
 - **不含呼叫者自己的便條**——地圖上自己的 pin 由 my_notes（過濾 `pickedUpAt == null`）疊圖。
+- **不含任何人的旅遊紀錄**（`audience: self`），包含作者自己的。
 - `pickable` 與 `distanceM` 是呼叫當下的快照，可能過期；撿起時伺服器重新驗證。
   `distanceM` 由伺服器計算，**client 不得自行重算**，也**不得硬編 50m/100m 門檻**
   ——半徑是伺服器常數，調整不需 client 改版。
@@ -132,6 +151,7 @@ curl -X POST "$BASE/rest/v1/rpc/pickup_note" -H "apikey: $KEY" \
 - **獨佔**：同一張便條全世界只有一人撿得到，先到先贏；輸家收到 `note_taken`。
 - **冪等重試**：撿起已成功但回應在網路上遺失時，同一人重試會**再次回傳成功**
   （不會誤報 `note_taken`）——timeout 後可安心重試同一筆。
+- 別人的旅遊紀錄撿不走，回 `note_not_found`——與不存在的便條同一個答案（見 §3）。
 - `too_far` 不附距離數字；提示文案可用上次 NearbyHint 的 `distanceM`，
   **不得解析錯誤字串取數字**。
 
@@ -144,7 +164,8 @@ curl -X POST "$BASE/rest/v1/rpc/pickup_note" -H "apikey: $KEY" \
 ```
 
 排序：my_notes 依 `createdAt` 新→舊、my_collection 依 `pickedUpAt` 新→舊。
-每頁預設 50、上限 100。翻頁規則：
+每頁預設 50、上限 100。my_notes 含公開便條與旅遊紀錄兩者，以 `audience` 分辨；
+my_collection 的 `audience` 恆為 `anyone`。翻頁規則：
 
 - 第一頁：不帶 `p_cursor`（或給 null）。
 - 下一頁：把上一頁的 `nextCursor` **原樣**放進 `p_cursor`。
@@ -179,8 +200,9 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 | `invalid_cursor` | my_notes/my_collection | 游標無效或已過期格式，改從第一頁重新載入 |
 | `content_empty` / `content_too_long` | drop | 表單行內提示（1–500 code point） |
 | `invalid_style_code` | drop | client bug，修 payload（代號須落在 1–32767） |
-| `active_note_limit` | drop | 「等便條被撿走再留」（上限 50 張未撿） |
-| `note_not_found` | pickup | 移除 pin、刷新 |
+| `invalid_audience` | drop | client bug，修 payload（只認得 `anyone`／`self`） |
+| `active_note_limit` | drop | 「等便條被撿走再留」（上限 50 張未撿的公開便條；旅遊紀錄不受限） |
+| `note_not_found` | pickup | 移除 pin、刷新（別人的旅遊紀錄也回這個） |
 | `note_taken` | pickup | 「有人搶先一步」、移除 pin |
 | `own_note` | pickup | UI 正常不會觸發（nearby 不含自己的） |
 | `too_far` | pickup | 「再走近一點」 |
@@ -198,7 +220,10 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 
 ## 10. Changelog
 
-- 2026-07-28 **v3.0**（進行中，iOS 動工前一次到位）：Note 與 NearbyHint 新增 `color`／`style`
+- 2026-07-28 **v3.0**（進行中，iOS 動工前一次到位）：Note 新增 `audience`
+  （`anyone`／`self`），drop_note 新增可省略參數 `p_audience` 與 `invalid_audience` token；
+  旅遊紀錄不進任何人的探索結果、別人撿取回 `note_not_found`、不佔用未撿便條上限。
+  Note 與 NearbyHint 新增 `color`／`style`
   兩個獨立代號（對照表在裝置端，後端只存代號；未知代號渲染預設樣式），drop_note 新增
   兩個可省略參數 `p_color`／`p_style` 與 `invalid_style_code` token。
   wire format 改版（**breaking**）——

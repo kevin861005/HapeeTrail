@@ -71,8 +71,9 @@ paths:
         回傳建立的 Note（content 為 trim 後的正規版本，client 應以回傳值取代本地草稿）。
         ⚠️ 不冪等：timeout 後勿盲目重試，先以 my_notes 確認是否已建立。
         `p_color`／`p_style` 可省略，省略時由伺服器補預設（皆為 `1`）。
+        `p_audience` 可省略，省略時為 `anyone`（給任何人撿）。
         錯誤 token：`not_authenticated` `invalid_coordinates` `content_empty`
-        `content_too_long` `invalid_style_code` `active_note_limit`
+        `content_too_long` `invalid_style_code` `invalid_audience` `active_note_limit`
       requestBody:
         required: true
         content:
@@ -98,12 +99,20 @@ paths:
                   allOf: [{ $ref: "#/components/schemas/StyleCode" }]
                   default: 1
                   description: 卡片樣式代號；省略或給 null ＝ 伺服器預設 1
+                p_audience:
+                  allOf: [{ $ref: "#/components/schemas/Audience" }]
+                  default: anyone
+                  description: |
+                    誰撿得到；省略或給 null ＝ `anyone`。
+                    不認得的值 → `invalid_audience`（不會靜默走預設——那會把
+                    使用者以為私密的便條變成公開的）。
             example:
               p_content: 神社後面的拉麵店超好吃
               p_lat: 35.6595
               p_lng: 139.7005
               p_color: 1
               p_style: 1
+              p_audience: anyone
       responses:
         "200":
           description: 建立的便條
@@ -122,8 +131,10 @@ paths:
       operationId: nearbyNotes
       summary: 100m 內便條提示（探索輪詢）
       description: |
-        回傳 100m 內、非自己投放、未被撿走的便條 pin，最近優先、最多 20 筆
-        （截斷不另行標示）。刻意不含 content 與作者——內容是走進 50m 撿起的獎勵。
+        回傳 100m 內、非自己投放、未被撿走、且 `audience` 為 `anyone` 的便條 pin，
+        最近優先、最多 20 筆（截斷不另行標示）。
+        刻意不含 content 與作者——內容是走進 50m 撿起的獎勵。
+        旅遊紀錄（`audience: self`）不會出現在任何人的探索結果中，包含作者自己。
         `pickable` 為呼叫當下快照，伺服器於撿起時重新驗證；client 勿硬編 50/100m。
         錯誤 token：`not_authenticated` `invalid_coordinates`
       requestBody:
@@ -161,6 +172,8 @@ paths:
       description: |
         獨佔語意：全世界只有一人撿得到同一張，先到先贏；輸家收到 `note_taken`。
         冪等重試：撿起成功但回應遺失時，同一人重試回傳成功（不誤報 note_taken）。
+        別人的旅遊紀錄（`audience: self`）撿不走，且回 `note_not_found`——
+        與不存在的便條同一個答案，刻意不區分。
         錯誤 token：`not_authenticated` `invalid_coordinates` `note_not_found`
         `note_taken` `own_note` `too_far` `pickup_rate_limited`
       requestBody:
@@ -197,7 +210,8 @@ paths:
       summary: 我投放的便條（cursor 分頁）
       description: |
         自己投放的便條（含已被撿走的；`pickedUpAt != null` ⇒ 被撿走），
-        `createdAt` 新→舊。**cursor 分頁**：第一頁不帶 `p_cursor`；
+        `createdAt` 新→舊。公開便條與旅遊紀錄都在這裡，以 `audience` 分辨。
+        **cursor 分頁**：第一頁不帶 `p_cursor`；
         下一頁把上一頁的 `nextCursor` **原樣**放進 `p_cursor`。
         `nextCursor` 為 null ＝ 沒有更多——不必再多打一次確認。
         游標無法解碼、被竄改、或不屬於本 endpoint 的排序 → `invalid_cursor`
@@ -319,6 +333,15 @@ components:
         後端也因此不驗證代號是否存在於對照表——超出對照表範圍的值會被接受、原樣儲存、原樣回傳。
         **client 遇到未知代號一律渲染預設樣式**，不得視為錯誤。
         伺服器只做範圍粗檢，1–32767 之外 → `invalid_style_code`。
+    Audience:
+      type: string
+      enum: [anyone, self]
+      description: |
+        誰撿得到這張便條。與 `color`／`style` 性質不同——**後端理解這個值並據以過濾**，
+        它不是純呈現，因此不認得的值會被拒絕（`invalid_audience`）而不是走預設。
+        - `anyone`：任何人走進 50m 都能撿走；會出現在別人的探索結果中。
+        - `self`：只給自己的旅遊紀錄。不出現在任何人的探索結果中（含作者自己）、
+          任何人都撿不走（別人拿到 `note_not_found`）、也不佔用未撿便條的數量上限。
     Coordinate:
       type: object
       description: WGS-84 座標（回應端一律巢狀物件；請求端維持兩個扁平參數）
@@ -335,7 +358,7 @@ components:
         便條完整物件（drop_note / pickup_note / my_notes / my_collection 共用同一 shape）。
         不含任何 uuid 身分欄位（author_id/picked_up_by 不上 wire）——作者一律顯示為匿名旅人。
         鍵名為 camelCase，縮寫視為普通單字（日後的 `photoUrl` 不會是 `photoURL`）。
-      required: [id, content, color, style, coordinate, createdAt, pickedUpAt]
+      required: [id, content, color, style, audience, coordinate, createdAt, pickedUpAt]
       properties:
         id:
           type: string
@@ -348,6 +371,11 @@ components:
         style:
           allOf: [{ $ref: "#/components/schemas/StyleCode" }]
           description: 作者選的卡片樣式代號（未知代號 → 渲染預設樣式）
+        audience:
+          allOf: [{ $ref: "#/components/schemas/Audience" }]
+          description: |
+            誰撿得到。在 my_notes 中用來分辨公開便條與旅遊紀錄；
+            my_collection 中恆為 `anyone`（旅遊紀錄撿不走）。
         coordinate:
           allOf: [{ $ref: "#/components/schemas/Coordinate" }]
           description: 投放位置（第一階段不記錄撿起位置）
@@ -479,6 +507,7 @@ components:
             - content_empty
             - content_too_long
             - invalid_style_code
+            - invalid_audience
             - active_note_limit
             - note_not_found
             - note_taken

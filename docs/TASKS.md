@@ -22,7 +22,13 @@
     `invalid_style_code` token（實作前取得同意）；`ALL TESTS PASSED`、newman 11/11、
     redocly lint 通過、EXPLAIN 仍走 `notes_active_location_gix`；獨立 subagent 安全與
     正確性複核無 CRITICAL/MAJOR（含併發實測），code-review 的 4 項已修（證據見 ticket 04）
-  - 下一步：對 05 跑 `/implement`
+  - 05 私人便條 ✅ 2026-07-28：`supabase/migrations/20260728040000_private_notes.sql`；
+    `audience`（`anyone`／`self`，text＋CHECK）——不進任何人的探索、他人撿取回 `note_not_found`、
+    不佔也不受未撿便條上限；新增 `invalid_audience` token（實作前取得同意——此欄位後端必須
+    理解，靜默走預設等於把私密便條變公開）；`ALL TESTS PASSED`、newman 11/11、redocly lint 通過、
+    EXPLAIN 同資料前後對比計畫形狀不變且候選列 143→120。code-review 的 4 項已修
+    （constraint 命名、OpenAPI default 位置、Postman 參數、註解裸引用）（證據見 ticket 05）
+  - 下一步：對 06 跑 `/implement`（07 需知：未知值政策必須把 `audience` 排除在外，見 ticket 05）
 
 ## 待辦
 - [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）

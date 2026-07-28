@@ -44,10 +44,10 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('200 + Note 7 鍵 camelCase、座標巢狀、無 uuid 欄位、代號原樣回傳', () => {",
+                  "pm.test('200 + Note 8 鍵 camelCase、座標巢狀、無 uuid 欄位、代號原樣回傳', () => {",
                   "  pm.response.to.have.status(200);",
                   "  const n = pm.response.json();",
-                  "  pm.expect(n).to.have.all.keys('id','content','color','style','coordinate','createdAt','pickedUpAt');",
+                  "  pm.expect(n).to.have.all.keys('id','content','color','style','audience','coordinate','createdAt','pickedUpAt');",
                   "  pm.expect(n.color, '代號在 wire 上是數字而非字串').to.be.a('number');",
                   "  pm.expect(n.coordinate).to.have.all.keys('latitude','longitude');",
                   "  pm.expect(n.coordinate.latitude).to.be.a('number');",
@@ -67,7 +67,7 @@
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 測試便條 {{$randomInt}}\",\"p_lat\":35.6595,\"p_lng\":139.7005,\"p_color\":7,\"p_style\":3}" },
+            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 測試便條 {{$randomInt}}\",\"p_lat\":35.6595,\"p_lng\":139.7005,\"p_color\":7,\"p_style\":3,\"p_audience\":\"anyone\"}" },
             "url": { "raw": "{{base_url}}/rest/v1/rpc/drop_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "drop_note"] }
           }
         },
