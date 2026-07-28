@@ -12,12 +12,33 @@
   - locale 依賴（T16／ADR-0009）已由 migration 自己擋：ctype 不認得 Unicode 空白就
     `db push` 失敗。**若部署時真的撞到這個例外**，退路是把 `\s` 換成顯式字元集的 `btrim`
 - [ ] **T3** UGC 檢舉機制（App Store 審查前必須；`report_note` RPC + 隱藏 flag）
-- [ ] **T4** 便條 TTL 政策（產品決策；技術上為 pg_cron 一句 delete）
 
 ## 已完成
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T4** 便條 TTL：未撿的公開便條 90 天後退出地圖
+  ✅ 2026-07-29：`supabase/migrations/20260729010000_note_ttl.sql`；決策記為 **ADR-0010**。
+  **原描述「技術上為 pg_cron 一句 delete」低估了範圍**——TTL 要進四個地方（探索、撿取、
+  未撿額度、wire 的 `expiresAt`），且會讓契約既有的推論「`pickedUpAt == null` ⇒ 還在地圖上」失效。
+  作法：**讀時推導**（`created_at + public.note_ttl()`），沒有 cron、沒有欄位、沒有會失敗的
+  活動元件，符合 spec「狀態必須由伺服器推導而非儲存」。過期便條**仍留在作者的 my_notes 裡**
+  （正面回應 spec user story 13「不會有便條莫名消失」），只是不進探索、撿不走（回
+  `note_not_found`，與私人便條同立場）、不再佔額度。已撿走的與旅遊紀錄不受影響。
+  wire 新增 `expiresAt`（Note 8 鍵 → 9 鍵，非破壞性；旅遊紀錄為 null），契約跳 v3.3，
+  三份產出＋postman 同步。
+  獨立正確性驗證 **PASS**：89/90/91 天邊界在探索、撿取、額度三處**完全一致**
+  （半開區間，`created_at <= now()-ttl` 是 `>` 的精確補集，無縫隙）、額度釋放數量精確、
+  DST 跨界一致、三支重寫函式的其他行為（獨佔／冪等／頻率閘門／私人便條／兩個上限／
+  全部錯誤 token）與改前相同。
+  code-review 抓到並修掉五項：①**EXPLAIN 註解的毫秒數複現不出來，且極端密度下結論會反轉**
+  ——已改成只記錄可複現的計畫形狀與機制，並明說刻意不寫毫秒數（這是我這輪第四次在效能
+  數字上失手，寫死數字只會誤導後人）；②openapi 的 `pickedUpAt` 仍寫「null ＝ 仍在地圖上」，
+  與新增的 `expiresAt` 自我矛盾；③notes.md §10 漏列第五支 helper `note_ttl()`；
+  ④缺 ADR；⑤**額度釋放沒有測試**（四個呼叫點裡唯一沒測到、卻最有感的一個）——已補，
+  並以突變測試確認實心（拿掉 TTL 條件即以 `active_note_limit` 失敗）。
+  我自己逐行比對另抓到：一次 `create or replace` 三支函式時掉了幾段載重註解
+  （含「where 必須與索引述詞逐字一致，否則探索靜默退化成全表掃描」），已補回
 - [x] **T16** 全空白內容的判定改認 Unicode 空白
   ✅ 2026-07-29：`supabase/migrations/20260729000000_unicode_whitespace_trim.sql`；
   `btrim(p_content)` → `regexp_replace(p_content,'^\s+|\s+$','','g')`（`drop_note` 逐行比對

@@ -58,12 +58,13 @@ curl -X POST "$BASE/auth/v1/signup" -H "apikey: $KEY" \
 
 ## 3. 資料形狀
 
-**Note**（drop_note / pickup_note / my_notes / my_collection 共用同一 shape，恰好 8 鍵）：
+**Note**（drop_note / pickup_note / my_notes / my_collection 共用同一 shape，恰好 9 鍵）：
 
 ```json
 { "id": "5f8f1c1e-…", "content": "神社後面的拉麵店超好吃", "color": 1, "style": 1,
   "audience": "anyone", "coordinate": { "latitude": 35.6595, "longitude": 139.7005 },
-  "createdAt": "2026-07-12T03:21:45.123456Z", "pickedUpAt": null }
+  "createdAt": "2026-07-12T03:21:45.123456Z",
+  "expiresAt": "2026-10-10T03:21:45.123456Z", "pickedUpAt": null }
 ```
 
 - **不含任何 uuid 身分欄位**（`author_id`/`picked_up_by` 不上 wire）——作者一律顯示
@@ -71,6 +72,13 @@ curl -X POST "$BASE/auth/v1/signup" -H "apikey: $KEY" \
   且已發出的資料收不回來。
 - `coordinate` 是**投放位置**（第一階段不記錄撿起位置）。
 - 自己投放的便條 `pickedUpAt != null` ⇒ 已被人撿走——這是唯一的「被撿走」訊號。
+- **`expiresAt` — 這張便條何時退出地圖**（伺服器推導，不是儲存的欄位）。
+  公開便條為 `createdAt` ＋ 90 天；**旅遊紀錄為 null**（不會過期）。
+  所以「還在地圖上嗎」的判斷是 `pickedUpAt == null && now < expiresAt`——
+  **兩個欄位都要看**，不能只看 `pickedUpAt`。已撿走的便條仍保有 `expiresAt`，
+  那是關於這張便條的事實，不隨狀態改變。
+  期限是伺服器常數，**client 不得硬編 90 天**——調整期限不需要 app 改版
+  （與 50m/100m 半徑同一原則）。
 
 **NearbyHint**（僅 nearby_notes；刻意不含 content 與作者，但帶代號供地圖 pin 渲染）：
 
@@ -141,7 +149,7 @@ curl -X POST "$BASE/rest/v1/rpc/drop_note" -H "apikey: $KEY" \
   具體項目——不是一個「代表預設」的抽象槽）。兩者各自獨立，可以只給其中一個。
 - `p_audience` **可省略**（或給 null），此時為 `anyone`。不認得的值 → `invalid_audience`。
 - 回傳的 `content` 是伺服器 trim 後的正規版本，**client 應以它取代本地草稿**（否則本地顯示的字串會與伺服器存的不一致）。
-- **兩個上限各管各的**：未撿的**公開**便條上限 50 張（`active_note_limit`）；
+- **兩個上限各管各的**：未撿**且未過期**的公開便條上限 50 張（`active_note_limit`）；
   旅遊紀錄上限 5000 張（`private_note_limit`）。公開便條的額度算「未撿的」，被撿走就釋放；
   旅遊紀錄永遠不會被撿走，所以它的額度是絕對總量。兩者互不影響——公開便條滿了仍可繼續
   記錄旅程，旅遊紀錄滿了也不影響留公開便條。5000 張約等於每天寫一張寫 13 年。
@@ -155,6 +163,7 @@ curl -X POST "$BASE/rest/v1/rpc/nearby_notes" -H "apikey: $KEY" \
 ```
 
 - 回傳 `{ "items": [ … ] }`，≤20 筆、最近優先；無結果為空陣列（不會是 null）；截斷不另行標示。
+- **不含已過期的便條**（`expiresAt` 已過）——它們退出地圖，但仍留在作者的 my_notes 裡。
   結果包成物件而非裸陣列，日後在 envelope 上加欄位才不是破壞性變更。
 - **不含呼叫者自己的便條**——地圖上自己的 pin 由 my_notes（過濾 `pickedUpAt == null`）疊圖。
 - **不含任何人的旅遊紀錄**（`audience: self`），包含作者自己的。
@@ -177,6 +186,8 @@ curl -X POST "$BASE/rest/v1/rpc/pickup_note" -H "apikey: $KEY" \
 - **冪等重試**：撿起已成功但回應在網路上遺失時，同一人重試會**再次回傳成功**
   （不會誤報 `note_taken`）——timeout 後可安心重試同一筆。
 - 別人的旅遊紀錄撿不走，回 `note_not_found`——與不存在的便條同一個答案（見 §3）。
+- **已過期的便條同樣撿不走，也回 `note_not_found`**：它已退出地圖，沒有理由讓外人
+  分辨「這裡曾經有一張」與「這裡什麼都沒有」。
 - `too_far` 的 `details` 附**伺服器當下算出的實際距離**（`{"distanceM": 87}`，與
   NearbyHint 的 `distanceM` 同一算法）——文案可直接用它，不必沿用上一次探索結果的估計值。
   依 §2，沒拿到 `details` 或解析失敗時退回不含數字的文案即可。
@@ -278,7 +289,7 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 寫入面（POST／PATCH／DELETE）同樣 403，`anon` 得 401。五支契約 RPC 全是 SECURITY DEFINER，
 沒有一支需要 client 摸得到資料表，因此 `author_id`／`picked_up_by`／`location` 這些不上 wire
 的欄位**沒有任何 client 路徑讀得到**。內部 helper（時間戳格式化、游標編解碼、wire 形狀建構、
-距離計算）同樣不授權給任何 client 角色：它們不出現在 PostgREST 的路徑清單裡，直接以正確簽名
+距離計算、便條存活期）同樣不授權給任何 client 角色：它們不出現在 PostgREST 的路徑清單裡，直接以正確簽名
 呼叫則得 403（`42501 permission denied for function …`）——存在看得出來，但呼叫不動。
 
 技術上摸得到、但仍**不屬於契約**的只剩兩件，列出來是為了誠實，不是邀請使用：
@@ -292,6 +303,11 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 
 ## 11. Changelog
 
+- 2026-07-29 **v3.3**：Note 新增 `expiresAt`（第 9 個鍵，**新增欄位為非破壞性變更**）。
+  未撿的公開便條 90 天後退出探索與撿取（撿取回 `note_not_found`）、並釋放未撿便條的額度；
+  **但仍留在作者的 my_notes 裡**，不會憑空消失。旅遊紀錄與已撿走的便條不受影響
+  （旅遊紀錄的 `expiresAt` 為 null）。「還在地圖上嗎」自此要看 `pickedUpAt` 與 `expiresAt`
+  兩個欄位。期限是伺服器常數，請讀 `expiresAt` 而不要硬編 90 天。
 - 2026-07-29 **v3.2**：`content` 的 trim 改認**完整的 Unicode 空白**（原本只剝半角空白
   U+0020，連 tab 與換行都不剝）。於是只由全形空白、tab、換行、NBSP 組成的內容會被判為
   `content_empty` 而不再建立便條；尾端的這類空白也會被剝掉，因此**回傳的 `content` 可能

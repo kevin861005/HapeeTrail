@@ -55,7 +55,8 @@ create function pg_temp.fixture_users() returns uuid[] language sql immutable as
     '00000000-0000-0000-0000-00000000000d',  -- D：60 次/時上限測試
     '00000000-0000-0000-0000-00000000000e',  -- E：style 代號 ＋ 內容正規化測試
     '00000000-0000-0000-0000-00000000000f',  -- F：私人便條測試
-    '00000000-0000-0000-0000-000000000010'   -- G：私人便條絕對上限測試
+    '00000000-0000-0000-0000-000000000010',  -- G：私人便條絕對上限測試
+    '00000000-0000-0000-0000-000000000011'   -- H：TTL 過期測試
   ]::uuid[]
 $fn$;
 
@@ -91,7 +92,7 @@ select set_config('test.lat', (random() * 115 - 60)::text, true),   -- 緯度帶
 -- 隨機地點才能沿用下面手算的距離：30m ≈ 0.00027039、70m ≈ 0.00063090、130m ≈ 0.00117167。
 -- 各使用者的便條群以「整數度」隔開（1 度 ≈ 111km ≫ 100m 探索半徑）⇒ 群組間永遠互不可見，
 -- 這是不變式而不是機率：0 主群／2 私人（F）／4 樣式（E）／6 上限（C）／8 頻率（D）／
--- 10 私人上限（G）。最大位移 10 ＋ 基準上界 55 ＝ 65 度，離 ±90 還很遠。
+-- 10 私人上限（G）／12 TTL（H）。最大位移 12 ＋ 基準上界 55 ＝ 67 度，離 ±90 還很遠。
 create function pg_temp.tlat(d float8 default 0) returns float8
 language sql stable as $fn$ select current_setting('test.lat')::float8 + d $fn$;
 create function pg_temp.tlng() returns float8
@@ -112,7 +113,8 @@ begin
   -- v3 形狀：精確鍵集（不只是「有」，而是「只有」——白名單的價值在此）。
   -- uuid 身分欄位與 location 不得上 wire（T7），舊 snake_case 鍵也不得殘留。
   if (select array_agg(k order by k) from jsonb_object_keys(r) k)
-     <> array['audience','color','content','coordinate','createdAt','id','pickedUpAt','style'] then
+     <> array['audience','color','content','coordinate','createdAt','expiresAt','id',
+               'pickedUpAt','style'] then
     raise exception 'FAIL: unexpected JSON shape %', r;
   end if;
   -- 兩個代號皆可省略；預設值指向對照表中的具體項目（1 ＝ 現行黃色），不是抽象的「預設槽」
@@ -527,6 +529,26 @@ begin
   perform public.drop_note('journal after cap', clat + 0.1, clng, p_audience => 'self');
 end $$;
 
+-- 過期便條釋放額度（T4）。不驗這條的話，「額度被永久佔著」這個最有感的退化沒人守：
+-- 貼滿 50 張的人就算便條全部過期退出地圖，也永遠留不了新的。
+reset role;
+update public.notes set created_at = now() - interval '91 days'
+ where content in ('cap 1', 'cap 2', 'cap 3')
+   and author_id = '00000000-0000-0000-0000-00000000000c';
+select pg_temp.login('00000000-0000-0000-0000-00000000000c');
+do $$
+declare clat float8 := pg_temp.tlat(6);
+        clng float8 := pg_temp.tlng();
+begin
+  -- 3 張過期 ⇒ 恰好再放得下 3 張，第 4 張又滿
+  for i in 1..3 loop
+    perform public.drop_note('after expiry ' || i, clat, clng);
+  end loop;
+  perform pg_temp.expect_error(
+    format($q$select public.drop_note('one too many', %s, %s)$q$, clat, clng),
+    'active_note_limit', '{"maxActiveNotes": 50}');
+end $$;
+
 -- D：一小時內第 61 次撿取 → pickup_rate_limited
 reset role;
 insert into public.notes (author_id, content, lat, lng)
@@ -623,6 +645,74 @@ begin
     'private_note_limit', '{"maxPrivateNotes": 5000}');
   -- 兩個閘門各管各的：私人滿了不影響公開便條
   perform public.drop_note('g public', glat, glng);
+end $$;
+
+-- ─── TTL：未撿的公開便條 90 天後不再出現在探索與撿取（T4）──────────────────
+-- 過期是**讀時推導**的（created_at + TTL），沒有 cron、沒有欄位——過期便條仍留在
+-- 作者的 my_notes 裡（spec user story 13：「不會有便條莫名消失」）。
+reset role;
+insert into public.notes (author_id, content, lat, lng, created_at)
+values ('00000000-0000-0000-0000-000000000011', 'H fresh',   pg_temp.tlat(12), pg_temp.tlng(), now()),
+       ('00000000-0000-0000-0000-000000000011', 'H expired', pg_temp.tlat(12), pg_temp.tlng(),
+        now() - interval '91 days'),
+       -- 剛好在邊界內側：89 天前的便條仍在地圖上
+       ('00000000-0000-0000-0000-000000000011', 'H edge',    pg_temp.tlat(12), pg_temp.tlng(),
+        now() - interval '89 days'),
+       -- 旅遊紀錄不受 TTL 影響（它本來就不進探索，但 my_notes 與 expiresAt 要驗）
+       ('00000000-0000-0000-0000-000000000011', 'H old journal', pg_temp.tlat(12), pg_temp.tlng(),
+        now() - interval '400 days');
+update public.notes set audience = 'self' where content = 'H old journal';
+select set_config('test.h_expired_id',
+  (select id::text from public.notes
+    where content = 'H expired' and author_id = any(pg_temp.fixture_users())), true);
+
+select pg_temp.login('00000000-0000-0000-0000-00000000000a');   -- A：路人，從 H 的群組探索
+do $$
+declare items jsonb := pg_temp.ours(public.nearby_notes(pg_temp.tlat(12), pg_temp.tlng())->'items');
+        ids text[];
+begin
+  select array_agg(x->>'id' order by x->>'id') into ids from jsonb_array_elements(items) x;
+  -- 只該看到 fresh 與 edge 兩張；expired 不在，old journal 是旅遊紀錄也不在
+  if jsonb_array_length(items) <> 2 then
+    raise exception 'FAIL: 過期便條應退出探索，預期 2 張得 %：%', jsonb_array_length(items), items;
+  end if;
+  if current_setting('test.h_expired_id') = any(ids) then
+    raise exception 'FAIL: 過期便條出現在探索結果';
+  end if;
+  -- 就算拿得到 id 也撿不走，且回的是「與不存在同一個答案」
+  perform pg_temp.expect_error(
+    format($q$select public.pickup_note('%s', %s, %s)$q$,
+           current_setting('test.h_expired_id'), pg_temp.tlat(12), pg_temp.tlng()),
+    'note_not_found');
+end $$;
+
+-- 過期便條仍在作者的 my_notes 裡，且 expiresAt 講得出它何時過期
+reset role;
+select pg_temp.login('00000000-0000-0000-0000-000000000011');
+do $$
+declare p jsonb := public.my_notes();
+        n jsonb;
+begin
+  if jsonb_array_length(p->'items') <> 4 then
+    raise exception 'FAIL: 過期便條不該從 my_notes 消失，預期 4 張得 %', jsonb_array_length(p->'items');
+  end if;
+  for n in select * from jsonb_array_elements(p->'items') loop
+    if n->>'content' = 'H old journal' then
+      -- 旅遊紀錄不會過期 ⇒ expiresAt 為 null
+      if n->'expiresAt' <> 'null'::jsonb then
+        raise exception 'FAIL: 旅遊紀錄的 expiresAt 應為 null, got %', n->'expiresAt';
+      end if;
+    else
+      -- 公開便條：expiresAt ＝ createdAt ＋ TTL，且格式與其他時間戳一致
+      if (n->>'expiresAt') !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$' then
+        raise exception 'FAIL: expiresAt 格式 %', n->>'expiresAt';
+      end if;
+      if (n->>'expiresAt')::timestamptz <> (n->>'createdAt')::timestamptz + interval '90 days' then
+        raise exception 'FAIL: expiresAt 應為 createdAt + 90 天, got % / %',
+          n->>'createdAt', n->>'expiresAt';
+      end if;
+    end if;
+  end loop;
 end $$;
 
 -- ─── 列表 RPC：envelope ＋ 不透明游標 ───────────────────────────────────────

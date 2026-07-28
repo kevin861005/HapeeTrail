@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "3.2.0"
+  version: "3.3.0"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/trailstamp
@@ -369,7 +369,7 @@ components:
         便條完整物件（drop_note / pickup_note / my_notes / my_collection 共用同一 shape）。
         不含任何 uuid 身分欄位（author_id/picked_up_by 不上 wire）——作者一律顯示為匿名旅人。
         鍵名為 camelCase，縮寫視為普通單字（日後的 `photoUrl` 不會是 `photoURL`）。
-      required: [id, content, color, style, audience, coordinate, createdAt, pickedUpAt]
+      required: [id, content, color, style, audience, coordinate, createdAt, expiresAt, pickedUpAt]
       properties:
         id:
           type: string
@@ -392,12 +392,25 @@ components:
           description: 投放位置（第一階段不記錄撿起位置）
         createdAt:
           $ref: "#/components/schemas/Timestamp"
+        expiresAt:
+          type: string
+          format: date-time
+          pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$'
+          nullable: true
+          description: |
+            這張便條何時退出地圖（伺服器推導，非儲存欄位）。公開便條 ＝ `createdAt` ＋ 90 天；
+            **旅遊紀錄為 null**（不會過期）。判斷「還在地圖上嗎」要看
+            `pickedUpAt == null && now < expiresAt` — 兩個欄位都要，不能只看 `pickedUpAt`。
+            期限是伺服器常數，client 不得硬編（同 50m/100m 半徑的原則）。
         pickedUpAt:
           type: string
           format: date-time
           pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$'
           nullable: true
-          description: 格式同 Timestamp；null ＝ 仍在地圖上
+          description: |
+            格式同 Timestamp；null ＝ 尚未被撿走。
+            ⚠️ **不等於「仍在地圖上」**——便條也可能已過期（見 `expiresAt`）。
+            判斷還在不在地圖上要看 `pickedUpAt == null && now < expiresAt`。
 
     NearbyResult:
       type: object
