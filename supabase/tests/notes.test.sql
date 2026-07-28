@@ -45,10 +45,25 @@ begin
   if r->>'content' <> 'hello from Tokyo' then
     raise exception 'FAIL: btrim not applied, got %', r->>'content';
   end if;
-  -- 6 鍵 shape；uuid 身分欄位與 location 不得上 wire（T7）
-  if not (r ?& array['id','content','lat','lng','created_at','picked_up_at'])
-     or (r ?| array['location','author_id','picked_up_by']) then
+  -- v3 形狀：精確鍵集（不只是「有」，而是「只有」——白名單的價值在此）。
+  -- uuid 身分欄位與 location 不得上 wire（T7），舊 snake_case 鍵也不得殘留。
+  if (select array_agg(k order by k) from jsonb_object_keys(r) k)
+     <> array['content','coordinate','createdAt','id','pickedUpAt'] then
     raise exception 'FAIL: unexpected JSON shape %', r;
+  end if;
+  -- 座標為巢狀物件
+  if (select array_agg(k order by k) from jsonb_object_keys(r->'coordinate') k)
+     <> array['latitude','longitude']
+     or (r->'coordinate'->>'latitude')::float8 <> 35.6595
+     or (r->'coordinate'->>'longitude')::float8 <> 139.7005 then
+    raise exception 'FAIL: coordinate not nested/correct: %', r->'coordinate';
+  end if;
+  -- 時間戳固定六位小數 ＋ Z（client 不必為位數寫容錯分支）
+  if (r->>'createdAt') !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$' then
+    raise exception 'FAIL: createdAt format %', r->>'createdAt';
+  end if;
+  if r->'pickedUpAt' <> 'null'::jsonb then
+    raise exception 'FAIL: pickedUpAt should be JSON null, got %', r->'pickedUpAt';
   end if;
 end $$;
 
@@ -68,26 +83,46 @@ do $$ begin perform public.drop_note('at 130m', 35.66067167, 139.7005); end $$;
 -- ─── nearby_notes：半徑、排序、pickable、排除自己 ──────────────────────────
 -- B 自己查：自己的便條一律不出現
 do $$
-declare c int;
+declare r jsonb := public.nearby_notes(35.6595, 139.7005);
 begin
-  select count(*) into c from public.nearby_notes(35.6595, 139.7005);
-  if c <> 0 then raise exception 'FAIL: own notes appeared in nearby (%)', c; end if;
+  -- 零結果：items 必須是空陣列而非 null（client 不必為 null 寫分支）
+  if r->'items' <> '[]'::jsonb then
+    raise exception 'FAIL: own notes appeared in nearby / items not empty array: %', r;
+  end if;
 end $$;
 
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000a');
 
 do $$
-declare rows record; i int := 0;
+declare r jsonb; h jsonb; i int := 0;
 begin
   -- 從基準點查：預期看到 0m（hello）與 70m 兩張，130m 那張不可見
-  for rows in select * from public.nearby_notes(35.6595, 139.7005) loop
+  r := public.nearby_notes(35.6595, 139.7005);
+  -- 探索結果是含 items 的物件而非裸陣列（日後加欄位才不是破壞性變更）
+  if (select array_agg(k) from jsonb_object_keys(r) k) <> array['items']
+     or jsonb_typeof(r->'items') <> 'array' then
+    raise exception 'FAIL: nearby envelope shape %', r;
+  end if;
+  for h in select * from jsonb_array_elements(r->'items') loop
     i := i + 1;
-    if i = 1 and not (rows.distance_m <= 5 and rows.pickable) then
-      raise exception 'FAIL: nearest row wrong: distance_m=%, pickable=%', rows.distance_m, rows.pickable;
+    -- 提示的精確鍵集：不含 content 與任何作者資訊
+    if (select array_agg(k order by k) from jsonb_object_keys(h) k)
+       <> array['coordinate','createdAt','distanceM','id','pickable'] then
+      raise exception 'FAIL: unexpected hint shape %', h;
     end if;
-    if i = 2 and not (rows.distance_m between 60 and 80 and not rows.pickable) then
-      raise exception 'FAIL: 70m row wrong: distance_m=%, pickable=%', rows.distance_m, rows.pickable;
+    if (select array_agg(k order by k) from jsonb_object_keys(h->'coordinate') k)
+       <> array['latitude','longitude'] then
+      raise exception 'FAIL: hint coordinate not nested: %', h->'coordinate';
+    end if;
+    if (h->>'createdAt') !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$' then
+      raise exception 'FAIL: hint createdAt format %', h->>'createdAt';
+    end if;
+    if i = 1 and not ((h->>'distanceM')::int <= 5 and (h->>'pickable')::boolean) then
+      raise exception 'FAIL: nearest row wrong: %', h;
+    end if;
+    if i = 2 and not ((h->>'distanceM')::int between 60 and 80 and not (h->>'pickable')::boolean) then
+      raise exception 'FAIL: 70m row wrong: %', h;
     end if;
   end loop;
   if i <> 2 then raise exception 'FAIL: expected 2 nearby rows, got %', i; end if;
@@ -105,9 +140,8 @@ select set_config('test.hello_id',
   (select id::text from public.notes where content = 'hello from Tokyo'), true);
 select pg_temp.login('00000000-0000-0000-0000-00000000000a');
 do $$
-declare c int;
+declare c int := jsonb_array_length(public.nearby_notes(35.6595, 139.7005)->'items');
 begin
-  select count(*) into c from public.nearby_notes(35.6595, 139.7005);
   if c <> 20 then raise exception 'FAIL: nearby limit, expected 20 got %', c; end if;
 end $$;
 
@@ -121,7 +155,8 @@ begin
 
   -- 30m 內 → 成功，content 揭露
   r := public.pickup_note(v_id, 35.65977039, 139.7005);
-  if r->>'content' <> 'hello from Tokyo' or (r->>'picked_up_at') is null then
+  if r->>'content' <> 'hello from Tokyo'
+     or (r->>'pickedUpAt') !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$' then
     raise exception 'FAIL: pickup result wrong: %', r;
   end if;
 
@@ -160,8 +195,9 @@ select pg_temp.login('00000000-0000-0000-0000-00000000000d');
 do $$
 declare c int;
 begin
-  select count(*) into c from public.nearby_notes(35.6595, 139.7005) nn
-  where nn.id = current_setting('test.hello_id')::uuid;
+  select count(*) into c
+  from jsonb_array_elements(public.nearby_notes(35.6595, 139.7005)->'items') h
+  where h->>'id' = current_setting('test.hello_id');
   if c <> 0 then raise exception 'FAIL: picked note still in nearby'; end if;
 end $$;
 
@@ -255,21 +291,26 @@ reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000b');
 do $$
 declare
-  seen uuid[] := '{}'; page record; total int := 0; batch int;
+  seen uuid[] := '{}'; item jsonb; total int := 0; batch int;
   last_ts timestamptz := null; last_id uuid := null;
   prev_ts timestamptz; prev_id uuid;
+  cur_ts timestamptz; cur_id uuid;
 begin
-  -- B 以每頁 10 筆走完自己的 29 張：不重複、不遺漏、(created_at,id) 嚴格遞減
+  -- B 以每頁 10 筆走完自己的 29 張：不重複、不遺漏、(createdAt,id) 嚴格遞減。
+  -- 游標值取自 wire 上的 createdAt 字串再轉回 timestamptz——同時驗證固定格式
+  -- 的微秒精度可無損往返（丟精度會在此重複或掉列）。
   loop
     batch := 0; prev_ts := null; prev_id := null;
-    for page in select * from public.my_notes(10, last_ts, last_id) loop
+    for item in select * from jsonb_array_elements(public.my_notes(10, last_ts, last_id)) loop
       batch := batch + 1;
-      if page.id = any(seen) then raise exception 'FAIL: my_notes duplicate id across pages'; end if;
-      seen := seen || page.id;
-      if prev_ts is not null and (page.created_at, page.id) >= (prev_ts, prev_id) then
+      cur_ts := (item->>'createdAt')::timestamptz;
+      cur_id := (item->>'id')::uuid;
+      if cur_id = any(seen) then raise exception 'FAIL: my_notes duplicate id across pages'; end if;
+      seen := seen || cur_id;
+      if prev_ts is not null and (cur_ts, cur_id) >= (prev_ts, prev_id) then
         raise exception 'FAIL: my_notes order not strictly descending';
       end if;
-      prev_ts := page.created_at; prev_id := page.id;
+      prev_ts := cur_ts; prev_id := cur_id;
     end loop;
     exit when batch = 0;
     total := total + batch;
@@ -278,7 +319,7 @@ begin
   if total <> 29 then raise exception 'FAIL: my_notes walked % rows, expected 29', total; end if;
 
   -- p_limit 下界 clamp：0 → 1 筆
-  select count(*) into total from public.my_notes(0, null, null);
+  total := jsonb_array_length(public.my_notes(0, null, null));
   if total <> 1 then raise exception 'FAIL: my_notes p_limit clamp, got %', total; end if;
 end $$;
 
@@ -292,26 +333,33 @@ select pg_temp.expect_error(
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000d');
 do $$
-declare p1 uuid[]; p2 uuid[]; c_ts timestamptz; c_id uuid; n int;
+declare p1 jsonb; p2 jsonb; c_ts timestamptz; c_id uuid; n int;
 begin
-  select array_agg(t.id), count(*) into p1, n from public.my_collection() t;
+  p1 := public.my_collection();
+  n := jsonb_array_length(p1);
   if n <> 50 then raise exception 'FAIL: my_collection default limit, got %', n; end if;
 
-  select t.picked_up_at, t.id into c_ts, c_id
-  from public.my_collection() t offset 49 limit 1;
-  select array_agg(t.id), count(*) into p2, n from public.my_collection(50, c_ts, c_id) t;
+  c_ts := (p1->49->>'pickedUpAt')::timestamptz;
+  c_id := (p1->49->>'id')::uuid;
+  p2 := public.my_collection(50, c_ts, c_id);
+  n := jsonb_array_length(p2);
   if n <> 10 then raise exception 'FAIL: my_collection page 2, got % rows', n; end if;
-  if p1 && p2 then raise exception 'FAIL: my_collection pages overlap'; end if;
+  if exists (select 1 from jsonb_array_elements(p1) a
+             join jsonb_array_elements(p2) b on a->>'id' = b->>'id') then
+    raise exception 'FAIL: my_collection pages overlap';
+  end if;
 end $$;
 
--- A 的收藏 = 1 張（hello）
+-- A 的收藏 = 1 張（hello）；A 沒投放過任何便條 ⇒ my_notes 為空陣列而非 null
 reset role;
 select pg_temp.login('00000000-0000-0000-0000-00000000000a');
 do $$
-declare n int;
+declare n int := jsonb_array_length(public.my_collection());
 begin
-  select count(*) into n from public.my_collection();
   if n <> 1 then raise exception 'FAIL: A my_collection expected 1, got %', n; end if;
+  if public.my_notes() <> '[]'::jsonb then
+    raise exception 'FAIL: empty my_notes should be [], got %', public.my_notes();
+  end if;
 end $$;
 
 -- 列表 RPC 的權限面：空 claims → not_authenticated；anon → 拒絕

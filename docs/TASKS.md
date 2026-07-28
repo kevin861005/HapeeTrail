@@ -9,7 +9,10 @@
   設計理由：`docs/tasks/T11-contract-v3-design.md`
   - 01 白名單建構 ✅ 2026-07-28：`supabase/migrations/20260728000000_whitelist_json.sql`；
     既有測試套件未改仍 `ALL TESTS PASSED`、newman 9/9、暫時欄位探針證明不外洩（證據見 ticket 01）
-  - 下一步：對 02 跑 `/implement`
+  - 02 wire 格式 v3 ✅ 2026-07-28：`supabase/migrations/20260728010000_wire_format_v3.sql`；
+    camelCase＋巢狀 coordinate＋固定六位小數時間戳＋nearby envelope；`ALL TESTS PASSED`、
+    newman 9/9、redocly lint 通過、EXPLAIN 索引未退化（證據見 ticket 02）
+  - 下一步：對 03 跑 `/implement`
 
 ## 待辦
 - [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）

@@ -11,9 +11,12 @@ endpoint 的權威規格（path、header、request/response schema、錯誤格�
 共同約定：
 
 - 所有業務 endpoint 都是 `POST /rest/v1/rpc/{fn}`，body 為 JSON，**鍵名完全等於參數名**
-  （`p_content`、`p_lat`…，見 openapi.yaml）。
+  （`p_content`、`p_lat`…，見 openapi.yaml）。**請求端與回應端的命名刻意不同**：
+  請求鍵名是函式參數名（`p_` 底線），回應鍵名是 camelCase；座標在請求端是兩個扁平
+  浮點數參數（扁平才拿得到資料庫的型別檢查），在回應端是巢狀物件。
 - 每個請求帶 `apikey: <publishable key>`；除 signup 外另帶 `Authorization: Bearer <access_token>`。
-- 時間戳一律 UTC ISO-8601，**小數秒位數可變**（可能整秒無小數）——解析器必須容忍。
+- 回應的時間戳格式**固定**為 `YYYY-MM-DDTHH:MM:SS.ffffffZ`——永遠六位小數、永遠 `Z`，
+  不因秒數恰為整數而變動位數。
 - 第一階段沒有 Realtime，輪詢是唯一新鮮度機制；數量（收藏數等）由 client 從列表自算。
 - 以下 curl 範例假設：`$BASE`（如 `http://127.0.0.1:54321`）、`$KEY`、`$TOKEN` 已設定。
 
@@ -46,26 +49,29 @@ curl -X POST "$BASE/auth/v1/signup" -H "apikey: $KEY" \
 
 ## 3. 資料形狀
 
-**Note**（drop_note / pickup_note / my_notes / my_collection 共用同一 shape，恰好 6 鍵）：
+**Note**（drop_note / pickup_note / my_notes / my_collection 共用同一 shape，恰好 5 鍵）：
 
 ```json
 { "id": "5f8f1c1e-…", "content": "神社後面的拉麵店超好吃",
-  "lat": 35.6595, "lng": 139.7005,
-  "created_at": "2026-07-12T03:21:45.123456+00:00", "picked_up_at": null }
+  "coordinate": { "latitude": 35.6595, "longitude": 139.7005 },
+  "createdAt": "2026-07-12T03:21:45.123456Z", "pickedUpAt": null }
 ```
 
 - **不含任何 uuid 身分欄位**（`author_id`/`picked_up_by` 不上 wire）——作者一律顯示
   「匿名旅人」。原因：帳號綁定（Phase 2）後 uuid 會變成可連結真人身分的穩定識別字，
   且已發出的資料收不回來。
-- `lat`/`lng` 是**投放位置**（第一階段不記錄撿起位置）。
-- 自己投放的便條 `picked_up_at != null` ⇒ 已被人撿走——這是唯一的「被撿走」訊號。
+- `coordinate` 是**投放位置**（第一階段不記錄撿起位置）。
+- 自己投放的便條 `pickedUpAt != null` ⇒ 已被人撿走——這是唯一的「被撿走」訊號。
 
 **NearbyHint**（僅 nearby_notes；刻意不含 content 與作者）：
 
 ```json
-{ "id": "5f8f1c1e-…", "lat": 35.65977, "lng": 139.7005,
-  "distance_m": 30, "pickable": true, "created_at": "…" }
+{ "id": "5f8f1c1e-…", "coordinate": { "latitude": 35.65977, "longitude": 139.7005 },
+  "distanceM": 30, "pickable": true, "createdAt": "…" }
 ```
+
+回應鍵名一律 camelCase，且**縮寫視為普通單字**（`distanceM`；日後的 `photoUrl`
+不會是 `photoURL`）——此後新增欄位一律比照。
 
 ## 4. drop_note — 留便條
 
@@ -91,10 +97,11 @@ curl -X POST "$BASE/rest/v1/rpc/nearby_notes" -H "apikey: $KEY" \
   -d '{"p_lat":35.65977,"p_lng":139.7005}'
 ```
 
-- 回傳 ≤20 筆、最近優先、可能為空陣列；截斷不另行標示。
-- **不含呼叫者自己的便條**——地圖上自己的 pin 由 my_notes（過濾 `picked_up_at == null`）疊圖。
-- `pickable` 與 `distance_m` 是呼叫當下的快照，可能過期；撿起時伺服器重新驗證。
-  `distance_m` 由伺服器計算，**client 不得自行重算**，也**不得硬編 50m/100m 門檻**
+- 回傳 `{ "items": [ … ] }`，≤20 筆、最近優先；無結果為空陣列（不會是 null）；截斷不另行標示。
+  結果包成物件而非裸陣列，日後在 envelope 上加欄位才不是破壞性變更。
+- **不含呼叫者自己的便條**——地圖上自己的 pin 由 my_notes（過濾 `pickedUpAt == null`）疊圖。
+- `pickable` 與 `distanceM` 是呼叫當下的快照，可能過期；撿起時伺服器重新驗證。
+  `distanceM` 由伺服器計算，**client 不得自行重算**，也**不得硬編 50m/100m 門檻**
   ——半徑是伺服器常數，調整不需 client 改版。
 - **輪詢的設計假設**：本 endpoint 為前景輪詢設計，建議在位移約 25–50m 時重查＋提供
   手動刷新。粗粒度定位服務（基地台等級、數百公尺）不足以支撐 100m 半徑的體驗。
@@ -111,12 +118,12 @@ curl -X POST "$BASE/rest/v1/rpc/pickup_note" -H "apikey: $KEY" \
 - **獨佔**：同一張便條全世界只有一人撿得到，先到先贏；輸家收到 `note_taken`。
 - **冪等重試**：撿起已成功但回應在網路上遺失時，同一人重試會**再次回傳成功**
   （不會誤報 `note_taken`）——timeout 後可安心重試同一筆。
-- `too_far` 不附距離數字；提示文案可用上次 NearbyHint 的 `distance_m`，
+- `too_far` 不附距離數字；提示文案可用上次 NearbyHint 的 `distanceM`，
   **不得解析錯誤字串取數字**。
 
 ## 7. my_notes／my_collection — 列表（cursor 分頁）
 
-排序：my_notes 依 `created_at` 新→舊、my_collection 依 `picked_up_at` 新→舊。
+排序：my_notes 依 `createdAt` 新→舊、my_collection 依 `pickedUpAt` 新→舊。
 每頁預設 50、上限 100。翻頁規則：
 
 - 第一頁：不帶游標。
@@ -132,10 +139,10 @@ curl -X POST "$BASE/rest/v1/rpc/pickup_note" -H "apikey: $KEY" \
 # 第一頁
 curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"p_limit":50}'
-# 下一頁（游標＝上一頁最後一列的 created_at 原樣字串 + id）
+# 下一頁（游標＝上一頁最後一列的 createdAt 原樣字串 + id）
 curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"p_limit":50,"p_before_created_at":"2026-07-12T03:21:45.123456+00:00","p_before_id":"5f8f1c1e-…"}'
+  -d '{"p_limit":50,"p_before_created_at":"2026-07-12T03:21:45.123456Z","p_before_id":"5f8f1c1e-…"}'
 ```
 
 ## 8. 錯誤碼表（凍結契約）
@@ -167,6 +174,10 @@ curl -X POST "$BASE/rest/v1/rpc/my_notes" -H "apikey: $KEY" \
 
 ## 10. Changelog
 
+- 2026-07-28 **v3.0**（進行中，iOS 動工前一次到位）：wire format 改版（**breaking**）——
+  鍵名改 camelCase、座標改巢狀 `coordinate` 物件、時間戳格式固定為六位小數 ＋ `Z`、
+  nearby_notes 改回傳 `{ "items": [...] }` envelope。
+  請求端（`p_` 參數名、扁平座標）不變。
 - 2026-07-12 **v2.2**：文件語言中立化——移除全部 Swift 程式碼，規則改以 wire 層語言
   陳述＋curl 範例；契約語意不變（wire format 無任何變動）。
 - 2026-07-12 **v2.1**：Note shape 移除 `author_id`/`picked_up_by`（**breaking**）；

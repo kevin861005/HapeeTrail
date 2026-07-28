@@ -44,10 +44,14 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('200 + Note 6 鍵、無 uuid 欄位', () => {",
+                  "pm.test('200 + Note 5 鍵 camelCase、座標巢狀、無 uuid 欄位', () => {",
                   "  pm.response.to.have.status(200);",
                   "  const n = pm.response.json();",
-                  "  pm.expect(n).to.have.all.keys('id','content','lat','lng','created_at','picked_up_at');",
+                  "  pm.expect(n).to.have.all.keys('id','content','coordinate','createdAt','pickedUpAt');",
+                  "  pm.expect(n.coordinate).to.have.all.keys('latitude','longitude');",
+                  "  pm.expect(n.coordinate.latitude).to.be.a('number');",
+                  "  pm.expect(n.createdAt).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$/);",
+                  "  pm.expect(n.pickedUpAt).to.be.null;",
                   "  pm.environment.set('note_id', n.id);",
                   "});"
                 ],
@@ -164,13 +168,15 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('200 + 看得到旅人 A 的便條且 pickable', () => {",
+                  "pm.test('200 + envelope + 看得到旅人 A 的便條且 pickable', () => {",
                   "  pm.response.to.have.status(200);",
-                  "  const hints = pm.response.json();",
-                  "  const target = hints.find(h => h.id === pm.environment.get('note_id'));",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.all.keys('items');",
+                  "  const target = body.items.find(h => h.id === pm.environment.get('note_id'));",
                   "  pm.expect(target, 'A 的便條應出現在 nearby').to.exist;",
+                  "  pm.expect(target).to.have.all.keys('id','coordinate','distanceM','pickable','createdAt');",
+                  "  pm.expect(target.coordinate).to.have.all.keys('latitude','longitude');",
                   "  pm.expect(target.pickable).to.be.true;",
-                  "  pm.expect(target).to.not.have.any.keys('content','author_id');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -200,7 +206,7 @@
                   "  const n = pm.response.json();",
                   "  pm.expect(n.id).to.eql(pm.environment.get('note_id'));",
                   "  pm.expect(n.content).to.be.a('string');",
-                  "  pm.expect(n.picked_up_at).to.not.be.null;",
+                  "  pm.expect(n.pickedUpAt).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$/);",
                   "});"
                 ],
                 "type": "text/javascript"

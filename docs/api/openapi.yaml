@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "2.1.0"
+  version: "3.0.0"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/trailstamp
@@ -132,14 +132,11 @@ paths:
               p_lng: 139.7005
       responses:
         "200":
-          description: 附近便條提示（可能為空陣列）
+          description: 附近便條提示（envelope；items 可能為空陣列）
           content:
             application/json:
               schema:
-                type: array
-                maxItems: 20
-                items:
-                  $ref: "#/components/schemas/NearbyHint"
+                $ref: "#/components/schemas/NearbyResult"
         "400":
           $ref: "#/components/responses/BusinessError"
         "401":
@@ -188,9 +185,9 @@ paths:
       operationId: myNotes
       summary: 我投放的便條（keyset 分頁）
       description: |
-        自己投放的便條（含已被撿走的；`picked_up_at != null` ⇒ 被撿走），
-        `created_at` 新→舊。**cursor-based 分頁**：第一頁不帶游標；
-        下一頁帶上一頁最後一列的 `created_at` 與 `id`
+        自己投放的便條（含已被撿走的；`pickedUpAt != null` ⇒ 被撿走），
+        `createdAt` 新→舊。**cursor-based 分頁**：第一頁不帶游標；
+        下一頁帶上一頁最後一列的 `createdAt` 與 `id`
         （游標值必須原樣回傳伺服器給的字串，勿經 Date 轉換，避免精度損失）。
         游標兩欄位必須成對：只帶一個 → `invalid_cursor`。
         錯誤 token：`not_authenticated` `invalid_cursor`
@@ -208,7 +205,7 @@ paths:
                 summary: 下一頁（游標＝上一頁最後一列）
                 value:
                   p_limit: 50
-                  p_before_created_at: "2026-07-12T03:21:45.123456+00:00"
+                  p_before_created_at: "2026-07-12T03:21:45.123456Z"
                   p_before_id: 5f8f1c1e-9a4b-4c58-a9b1-2f6d3f0f7c21
       responses:
         "200":
@@ -230,9 +227,9 @@ paths:
       operationId: myCollection
       summary: 我撿到的便條（keyset 分頁）
       description: |
-        自己撿到的便條，`picked_up_at` 新→舊。分頁規則同 my_notes，
+        自己撿到的便條，`pickedUpAt` 新→舊。分頁規則同 my_notes，
         但游標是 `p_before_picked_at` ＋ `p_before_id`（必須成對，只帶一個 → `invalid_cursor`）。
-        `lat`/`lng` 是投放位置（第一階段不記錄撿起位置）；無作者資訊，顯示為匿名旅人。
+        `coordinate` 是投放位置（第一階段不記錄撿起位置）；無作者資訊，顯示為匿名旅人。
         錯誤 token：`not_authenticated` `invalid_cursor`
       requestBody:
         required: false
@@ -298,52 +295,75 @@ components:
     Timestamp:
       type: string
       format: date-time
-      description: UTC ISO-8601；小數秒位數可變（可能整秒無小數）
-      example: "2026-07-12T03:21:45.123456+00:00"
+      description: |
+        UTC ISO-8601，格式固定為 `YYYY-MM-DDTHH:MM:SS.ffffffZ`——
+        永遠六位小數、永遠 `Z`，不因秒數恰為整數而變動位數。
+      pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$'
+      example: "2026-07-12T03:21:45.123456Z"
+    Coordinate:
+      type: object
+      description: WGS-84 座標（回應端一律巢狀物件；請求端維持兩個扁平參數）
+      required: [latitude, longitude]
+      properties:
+        latitude:
+          $ref: "#/components/schemas/Latitude"
+        longitude:
+          $ref: "#/components/schemas/Longitude"
 
     Note:
       type: object
       description: |
         便條完整物件（drop_note / pickup_note / my_notes / my_collection 共用同一 shape）。
         不含任何 uuid 身分欄位（author_id/picked_up_by 不上 wire）——作者一律顯示為匿名旅人。
-      required: [id, content, lat, lng, created_at]
+        鍵名為 camelCase，縮寫視為普通單字（日後的 `photoUrl` 不會是 `photoURL`）。
+      required: [id, content, coordinate, createdAt, pickedUpAt]
       properties:
         id:
           type: string
           format: uuid
         content:
           type: string
-        lat:
-          $ref: "#/components/schemas/Latitude"
-        lng:
-          $ref: "#/components/schemas/Longitude"
-        created_at:
+        coordinate:
+          allOf: [{ $ref: "#/components/schemas/Coordinate" }]
+          description: 投放位置（第一階段不記錄撿起位置）
+        createdAt:
           $ref: "#/components/schemas/Timestamp"
-        picked_up_at:
+        pickedUpAt:
           type: string
           format: date-time
+          pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$'
           nullable: true
-          description: UTC ISO-8601（小數秒位數可變）；null ＝ 仍在地圖上
+          description: 格式同 Timestamp；null ＝ 仍在地圖上
+
+    NearbyResult:
+      type: object
+      description: 探索結果 envelope（無分頁；一律物件而非裸陣列，日後加欄位才不是破壞性變更）
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 20
+          description: 最近優先，最多 20 筆；無結果為空陣列（不會是 null）
+          items:
+            $ref: "#/components/schemas/NearbyHint"
 
     NearbyHint:
       type: object
       description: 探索 pin（刻意不含 content 與作者）
-      required: [id, lat, lng, distance_m, pickable, created_at]
+      required: [id, coordinate, distanceM, pickable, createdAt]
       properties:
         id:
           type: string
           format: uuid
-        lat:
-          $ref: "#/components/schemas/Latitude"
-        lng:
-          $ref: "#/components/schemas/Longitude"
-        distance_m:
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+        distanceM:
           type: integer
           description: 伺服器計算的整數公尺，client 勿自行重算
         pickable:
           type: boolean
           description: 是否在撿起半徑內（呼叫當下快照，撿起時伺服器重驗）
-        created_at:
+        createdAt:
           $ref: "#/components/schemas/Timestamp"
 
     MyNotesPage:
@@ -357,7 +377,7 @@ components:
           default: 50
         p_before_created_at:
           allOf: [{ $ref: "#/components/schemas/Timestamp" }]
-          description: 游標：上一頁最後一列的 created_at（原樣字串）
+          description: 游標：上一頁最後一列的 createdAt（原樣字串）
         p_before_id:
           type: string
           format: uuid
@@ -374,7 +394,7 @@ components:
           default: 50
         p_before_picked_at:
           allOf: [{ $ref: "#/components/schemas/Timestamp" }]
-          description: 游標：上一頁最後一列的 picked_up_at（原樣字串）
+          description: 游標：上一頁最後一列的 pickedUpAt（原樣字串）
         p_before_id:
           type: string
           format: uuid
