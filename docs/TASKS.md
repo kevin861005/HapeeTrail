@@ -15,11 +15,11 @@
 - [ ] **T13** 私人便條無數量閘門（安全複核 MAJOR）——實測單帳號連建 200 張全成功，
   之後仍可留滿 50 張公開便條。spec 明文接受此天花板，但其論證支持的是「更高的上限」
   而非「沒有上限」；補一個寬鬆的絕對上限即可關掉
-- [ ] **T17** `notes.test.sql` 的 nearby 斷言綁死東京固定點，任何人在那附近留便條就會讓套件失敗
-  ——**而 `notes.md` §4 的 curl 範例用的正是同一個點**（35.6595/139.7005）：照文件敲一次，
-  下次跑測試就爆 `FAIL: own notes appeared in nearby`，訊息還把人導向「私人便條／自己的便條
-  過濾壞了」這個錯方向。T14 只搬走了 collection 這個污染源，測試本身沒硬化。
-  修法方向：斷言改成只看本次測試建立的 id，而不是「陣列必須為空」
+- [ ] **T18** 測試座標改成每次隨機（T17 留下的已量化天花板）——`nearby_notes` 先取最近 20 筆，
+  才輪到 `pg_temp.ours()` 過濾，所以擋得住「外來便條混進結果」，擋不住「外來便條把測試自己的
+  擠出前 20 名」。實測門檻：**19 張**在 100m 內、比 70m 那張更近的未撿便條就會爆
+  （18 張仍過），訊息是 `FAIL: expected 2 nearby rows, got 1`——會紅不會靜默綠。
+  修法比照 postman collection 的隨機地點；代價是註解裡那些手算的公尺數失去固定參照
 - [ ] **T16** `btrim` 只吃 ASCII 空白（正確性複核 MINOR）——`E'\t\n'` 與全角空格 U+3000
   可建立便條，只有半角空白被 `content_empty` 擋。spec 未規定，但 CJK 使用者按到全角空白不罕見
 - [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
@@ -31,6 +31,19 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T17** `notes.test.sql` 對外來資料硬化（nearby 斷言不再綁死東京固定點）
+  ✅ 2026-07-28：`supabase/tests/notes.test.sql`；新增 `pg_temp.ours()` 把探索結果濾成
+  本測試建立的便條（作者屬 `pg_temp.fixture_users()`，該清單同時餵給 `insert into auth.users`，
+  只有一處），三處 nearby 斷言改成先濾再斷言；另兩處（上限 20 筆、撿走的便條消失）本來就
+  對外來資料免疫，刻意不濾。順帶修掉兩個抓 id 的純量子查詢沒有作者條件的問題——外來使用者
+  留下同內容便條會炸成 `more than one row returned by a subquery`，同一類誤導性失敗（已實測重現）。
+  red：照 notes.md §4 的 curl 敲一次 → `FAIL: private note leaked into nearby`（私人便條根本沒漏）；
+  green：5 張外來便條（含兩張與測試同內容、一張同座標私人）下仍 `ALL TESTS PASSED`，乾淨庫亦通過。
+  **突變測試證明沒變成空測**：拿掉 `audience` 過濾／`author_id` 過濾／`picked_up_at is null`、
+  半徑放大 1000 倍，四個 mutant 在有污染的資料庫上全部被抓到（獨立複核另下了 limit 放大的第五個，
+  同樣被抓）。code-review 抓到並修掉一個實質缺陷：我新寫的 `jsonb_typeof(...) <> 'array'` 是**死的**
+  ——鍵不存在時回 SQL NULL，`if` 不觸發，整段會靜默全綠（已實測確認，補 `is null` 那半）。
+  留下一個已量化的天花板，登記為 T18
 - [x] **T15** 撿取頻率閘門蓋掉冪等重試（正確性複核 MINOR）
   ✅ 2026-07-28：`supabase/migrations/20260728070000_idempotent_retry_under_rate_limit.sql`；
   閘門跳起來時先問一句「這張是不是已經是你的」，是就照常回成功——冪等重試不新增任何撿取，

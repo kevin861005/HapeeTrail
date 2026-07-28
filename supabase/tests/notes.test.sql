@@ -4,6 +4,7 @@
 -- 先 supabase db reset。全部在單一 transaction 內執行、結尾 ROLLBACK，不留任何測試資料。
 -- 注意：跨使用者的 id 查詢一律在 reset role（postgres）下先存入 GUC，
 -- 再登入目標使用者斷言——RLS 下直接查會拿到 NULL/空集合，測試會變成空測。
+-- 唯一例外是 nearby 結果的過濾，走 pg_temp.ours()（SECURITY DEFINER，理由見該處註解）。
 \set ON_ERROR_STOP on
 begin;
 
@@ -43,16 +44,43 @@ begin
   raise exception 'FAIL: expected error [%], but call succeeded', want;
 end $fn$;
 
+-- 假使用者清單的單一真相：下方的 insert 與 pg_temp.ours() 都吃這一份。
+-- 新增測試使用者只改這裡——分成兩份的話，漏改會讓 ours() 靜默丟掉新使用者的便條，
+-- 斷言照樣綠但覆蓋沒了。
+create function pg_temp.fixture_users() returns uuid[] language sql immutable as $fn$
+  select array[
+    '00000000-0000-0000-0000-00000000000a',  -- A：撿起者
+    '00000000-0000-0000-0000-00000000000b',  -- B：作者
+    '00000000-0000-0000-0000-00000000000c',  -- C：50 張上限測試
+    '00000000-0000-0000-0000-00000000000d',  -- D：60 次/時上限測試
+    '00000000-0000-0000-0000-00000000000e',  -- E：style 代號測試（便條刻意遠離東京，不干擾 nearby）
+    '00000000-0000-0000-0000-00000000000f'   -- F：私人便條測試（同上，另一個遠離的座標）
+  ]::uuid[]
+$fn$;
+
+-- 把探索結果濾成「本測試建立的便條」。
+-- nearby_notes 是唯一會跨使用者看見便條的查詢，於是也是唯一會被外來資料污染的地方
+-- （其餘查詢都被 RLS 限縮在自己的列內）。共用的開發資料庫上這很容易發生——
+-- docs/api/notes.md §4 的 curl 範例用的就是本檔的東京基準點，照著文件敲一次就會踩到，
+-- 而失敗訊息會寫成「private note leaked」「own notes appeared」，把人導向
+-- 「過濾邏輯壞了」這個完全錯誤的方向。
+-- SECURITY DEFINER：查作者需要繞過 RLS（呼叫時已登入為某個測試使用者，看不到別人的列）。
+-- ponytail: 只擋得住「外來便條混進結果」，擋不住「外來便條把我們的擠出前 20 名」——
+-- nearby_notes 先取最近的 20 筆，才輪到這裡過濾。真撞上時斷言會**紅**（不是靜默綠），
+-- 訊息是「expected 2 nearby rows, got 0」之類，追得回來。升級路徑：測試座標比照
+-- postman collection 改成每次隨機，代價是註解裡那些手算的公尺數會失去固定參照。
+create function pg_temp.ours(items jsonb) returns jsonb
+language sql stable security definer set search_path = '' as $fn$
+  select coalesce(pg_catalog.jsonb_agg(t.h order by t.ord), '[]'::jsonb)
+  from pg_catalog.jsonb_array_elements(items) with ordinality t(h, ord)
+  join public.notes n on n.id = (t.h->>'id')::uuid
+  where n.author_id = any(pg_temp.fixture_users())
+$fn$;
+
 -- ─── 假使用者與座標 ──────────────────────────────────────────────────────────
 -- 東京基準點；緯度每度約 110,953m（35.66°N），偏移只動 lat 便於計算
 --   30m ≈ 0.00027039、70m ≈ 0.00063090、130m ≈ 0.00117167
-insert into auth.users (id) values
-  ('00000000-0000-0000-0000-00000000000a'),  -- A：撿起者
-  ('00000000-0000-0000-0000-00000000000b'),  -- B：作者
-  ('00000000-0000-0000-0000-00000000000c'),  -- C：50 張上限測試
-  ('00000000-0000-0000-0000-00000000000d'),  -- D：60 次/時上限測試
-  ('00000000-0000-0000-0000-00000000000e'),  -- E：style 代號測試（便條刻意遠離東京，不干擾 nearby）
-  ('00000000-0000-0000-0000-00000000000f');  -- F：私人便條測試（同上，另一個遠離的座標）
+insert into auth.users (id) select unnest(pg_temp.fixture_users());  -- 名單見檔頭 helper
 
 -- ─── drop_note：驗證與 trim ─────────────────────────────────────────────────
 select pg_temp.login('00000000-0000-0000-0000-00000000000b');
@@ -164,15 +192,21 @@ select pg_temp.expect_error(
 -- 私人便條的 id：RLS 下 E 看不到，先以 postgres 身分存起來（否則測試會變成空測）
 reset role;
 select set_config('test.journal_id',
-  (select id::text from public.notes where content = 'journal at 20,20'), true);
+  -- 作者條件不可省：外來使用者留下同內容的便條會讓這個純量子查詢炸成
+  -- 「more than one row returned by a subquery」，訊息同樣不指向真因
+  (select id::text from public.notes
+    where content = 'journal at 20,20' and author_id = any(pg_temp.fixture_users())), true);
 
 select pg_temp.login('00000000-0000-0000-0000-00000000000e');
 do $$
 declare r jsonb := public.nearby_notes(20.0, 20.0);
+        ours jsonb;
 begin
-  if jsonb_array_length(r->'items') <> 1
-     or r->'items'->0->>'id' = current_setting('test.journal_id') then
-    raise exception 'FAIL: private note leaked into nearby: %', r;
+  -- F 在 (20,20) 放了一公開一私人；E 從同一點查只該看到公開的那張
+  ours := pg_temp.ours(r->'items');
+  if jsonb_array_length(ours) <> 1
+     or ours->0->>'id' = current_setting('test.journal_id') then
+    raise exception 'FAIL: private note leaked into nearby: %', ours;
   end if;
   -- 他人撿私人便條 → note_not_found。不新增「這是私人便條」的 token：
   -- 那等於向外人確認該座標存在一張他看不到的便條
@@ -206,10 +240,17 @@ select pg_temp.login('00000000-0000-0000-0000-00000000000b');
 -- B 自己查：自己的便條一律不出現
 do $$
 declare r jsonb := public.nearby_notes(35.6595, 139.7005);
+        ours jsonb;
 begin
-  -- 零結果：items 必須是空陣列而非 null（client 不必為 null 寫分支）
-  if r->'items' <> '[]'::jsonb then
-    raise exception 'FAIL: own notes appeared in nearby / items not empty array: %', r;
+  -- items 必須是陣列而非 null（零結果時為 []，client 不必為 null 寫分支）。
+  -- is null 那半不可省：鍵不存在時 jsonb_typeof 回 SQL NULL，`NULL <> 'array'` 也是 NULL，
+  -- plpgsql 的 if 不會觸發 ⇒ 少了它這條檢查是死的，整段會靜默全綠
+  if r->'items' is null or jsonb_typeof(r->'items') <> 'array' then
+    raise exception 'FAIL: items 應為陣列（零結果時是 [] 而非 null）: %', r;
+  end if;
+  ours := pg_temp.ours(r->'items');
+  if ours <> '[]'::jsonb then
+    raise exception 'FAIL: own notes appeared in nearby: %', ours;
   end if;
 end $$;
 
@@ -226,7 +267,7 @@ begin
      or jsonb_typeof(r->'items') <> 'array' then
     raise exception 'FAIL: nearby envelope shape %', r;
   end if;
-  for h in select * from jsonb_array_elements(r->'items') loop
+  for h in select * from jsonb_array_elements(pg_temp.ours(r->'items')) loop
     i := i + 1;
     -- 提示的精確鍵集：不含 content 與任何作者資訊
     if (select array_agg(k order by k) from jsonb_object_keys(h) k)
@@ -262,7 +303,8 @@ select '00000000-0000-0000-0000-00000000000b', 'bulk ' || g, 35.65953, 139.70053
 from generate_series(1, 25) g;
 -- 以 postgres 身分先存 hello 便條 id（RLS 下 A/D 看不到未撿的它）
 select set_config('test.hello_id',
-  (select id::text from public.notes where content = 'hello from Tokyo'), true);
+  (select id::text from public.notes
+    where content = 'hello from Tokyo' and author_id = any(pg_temp.fixture_users())), true);
 select pg_temp.login('00000000-0000-0000-0000-00000000000a');
 do $$
 declare c int := jsonb_array_length(public.nearby_notes(35.6595, 139.7005)->'items');
