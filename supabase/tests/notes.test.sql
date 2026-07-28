@@ -365,12 +365,18 @@ select pg_temp.expect_error(
 select pg_temp.expect_error($$update public.notes set content = 'x'$$, 'permission denied%');
 select pg_temp.expect_error($$delete from public.notes$$, 'permission denied%');
 
+-- distance_m 不授權給任何 client 角色：兩支呼叫端都是 SECURITY DEFINER，它不需要上檯面。
+-- 授權了就等於在契約外多開一支 RPC（as_wire_ts／as_cursor 是兩支 SECURITY INVOKER
+-- 列表逼出來的例外，這支沒有那個理由）
+select pg_temp.expect_error($$select public.distance_m(null, null)$$, 'permission denied%');
+
 -- anon role 完全不可達
 reset role;
 set local role anon;
 select pg_temp.expect_error($$select * from public.nearby_notes(35.6595, 139.7005)$$, 'permission denied%');
 select pg_temp.expect_error($$select public.drop_note('x', 35.6595, 139.7005)$$, 'permission denied%');
 select pg_temp.expect_error($$select count(*) from public.notes$$, 'permission denied%');
+select pg_temp.expect_error($$select public.distance_m(null, null)$$, 'permission denied%');
 reset role;
 
 -- authenticated role 但 JWT claims 為空 → 防禦碼 not_authenticated

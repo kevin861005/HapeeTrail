@@ -35,8 +35,15 @@
     `ALL TESTS PASSED`、newman 12/12（含 `details` 為字串而非物件的 wire 斷言）、redocly lint 通過；
     頻率閘門改寫後 EXPLAIN 由 Bitmap Heap Scan 3599 列降為 Index Only Scan 60 列。
     code-review 的 4 項已修（證據見 ticket 06）
+  - 08 距離算法單一真相 ✅ 2026-07-28：`supabase/migrations/20260728060000_distance_helper.sql`；
+    06 回報的重複經同意後收斂為 `public.distance_m()`，**不授權給任何 client 角色**
+    （HTTP 實測 authenticated 403／anon 401 ⇒ 不必進 07 的契約外路徑揭露）；純重構、
+    既有斷言未改仍 `ALL TESTS PASSED`、newman 12/12、EXPLAIN 索引與變更前逐字相同。
+    留下一個已量化的天花板：空 `search_path` 使 planner 無法 inline，每候選列多約 1.3–1.7µs
+    （MVP 規模約 0.1ms）——升級路徑寫在 migration 的 `ponytail:` 註解（證據見 ticket 08）
   - 下一步：對 07 跑 `/implement`（需知：未知值政策必須把 `audience` 排除在外，見 ticket 05；
-    ticket 06 回報了一項待討論的重複——距離算法散在 `nearby_notes` 與 `pickup_note` 兩處）
+    契約外路徑要揭露的是 `as_note_wire`／`as_wire_ts`／`as_cursor`／`parse_cursor` 四支，
+    `distance_m` 不在內——理由見 ticket 08）
 
 ## 待辦
 - [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
