@@ -4,10 +4,14 @@
 
 ## 進行中
 
-（無）
+- [ ] **T11** API 契約 v3（`color`/`style`/`audience`、不透明游標、錯誤 details、JSON 白名單）
+  ——spec：`.scratch/api-contract-v3/spec.md`；tickets：`.scratch/api-contract-v3/issues/`（7 張，01→07）；
+  設計理由：`docs/tasks/T11-contract-v3-design.md`
+  - 01 白名單建構 ✅ 2026-07-28：`supabase/migrations/20260728000000_whitelist_json.sql`；
+    既有測試套件未改仍 `ALL TESTS PASSED`、newman 9/9、暫時欄位探針證明不外洩（證據見 ticket 01）
+  - 下一步：對 02 跑 `/implement`
 
 ## 待辦
-
 - [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
   ——等什麼：進入大量測試階段（2026-07-12 決定：開發期以本機 supabase 為主）
 - [ ] **T3** UGC 檢舉機制（App Store 審查前必須；`report_note` RPC + 隱藏 flag）
