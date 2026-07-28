@@ -15,11 +15,11 @@
 - [ ] **T13** 私人便條無數量閘門（安全複核 MAJOR）——實測單帳號連建 200 張全成功，
   之後仍可留滿 50 張公開便條。spec 明文接受此天花板，但其論證支持的是「更高的上限」
   而非「沒有上限」；補一個寬鬆的絕對上限即可關掉
-- [ ] **T14** Postman collection 累積 committed 資料，約第 11 輪起假性失敗（正確性複核 MAJOR）
-  ——每輪留兩張便條從不清理，而 `nearby_notes` 只回最近 20 筆，殘留的 19m 便條會把本輪目標
-  擠出前 20 名；失敗看起來像後端 bug。同一根因也讓 `notes.test.sql` 在未 reset 的資料庫上失敗。
-  併修：collection 對私人便條零覆蓋（無 `self`／無他人撿私人便條／無 `invalid_audience`），
-  而 `notes.md` 對 iOS 宣稱「依資料夾順序執行即為完整流程」
+- [ ] **T17** `notes.test.sql` 的 nearby 斷言綁死東京固定點，任何人在那附近留便條就會讓套件失敗
+  ——**而 `notes.md` §4 的 curl 範例用的正是同一個點**（35.6595/139.7005）：照文件敲一次，
+  下次跑測試就爆 `FAIL: own notes appeared in nearby`，訊息還把人導向「私人便條／自己的便條
+  過濾壞了」這個錯方向。T14 只搬走了 collection 這個污染源，測試本身沒硬化。
+  修法方向：斷言改成只看本次測試建立的 id，而不是「陣列必須為空」
 - [ ] **T15** 撿取頻率閘門蓋掉冪等重試（正確性複核 MINOR）——閘門排在冪等診斷之前
   （`20260728060000_distance_helper.sql:100-108`），撿滿 60 次後對自己已撿到的那張重試會得
   `pickup_rate_limited`，與 `notes.md` §6「timeout 後可安心重試同一筆」不符
@@ -34,6 +34,17 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T14** Postman collection 累積 committed 資料導致假性失敗（正確性複核 MAJOR）
+  ✅ 2026-07-28：`docs/api/postman/`——每輪由「匿名登入（A）」的 Pre-request script 隨機挑地點，
+  位移一律只動緯度（每度公尺數不隨經度改變）；API 沒有刪除便條的路徑，所以只能靠換地點。
+  併修的私人便條覆蓋：`self` 建立、nearby 不出現、他人撿回 `note_not_found`、`invalid_audience`
+  ——斷言 12 → 15。
+  red：舊版乾淨資料庫連跑，**第 20 輪**斷在「A 的便條應出現在 nearby: expected undefined to exist」。
+  green：新版連跑 30 輪 0 失敗，資料庫累積 90 筆殘留後不 reset 直跑 SQL 套件仍 `ALL TESTS PASSED`。
+  **原描述兩處算錯已更正**：不是「每輪留兩張、第 11 輪起」——note A 每輪都被撿走、退出 partial
+  index，真正累積的是每輪 **1 張**未撿便條，距探索點 21m（非 19m），滿 20 張才把目標擠出前 20 名。
+  code-review 兩軸的 3 項已修（`details` 斷言凍結了非破壞性變更、環境變數缺 description、
+  空字串內插產生非法 JSON）；獨立複核另抓到一項不在本票範圍的缺陷，登記為 T17
 - [x] **T11** API 契約 v3（`color`/`style`/`audience`、不透明游標、錯誤 details、JSON 白名單）
   ✅ 2026-07-28：8 張 ticket 全數完成（`.scratch/api-contract-v3/`，spec ＋ issues 01→08 各附證據）；
   6 支 migration（`20260728000000`～`20260728060000`）；契約三份產出同步改寫

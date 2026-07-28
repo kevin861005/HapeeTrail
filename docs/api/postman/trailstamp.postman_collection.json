@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Trailstamp Notes API",
-    "description": "第一階段便條 API。搭配 local.postman_environment.json 使用。\n\n依資料夾順序執行即為完整流程：旅人 A 留便條 → 旅人 B 發現並撿起 → 收藏。\nsignup 請求的 Tests script 會自動把 access_token 寫回 environment，不需手動貼 token。\n\n注意：apikey 只對本地 supabase（127.0.0.1）有效；夥伴機器用 `supabase status` 查自己的 key 後改 environment。\n\nwire format 權威：docs/api/openapi.yaml；語意規則：docs/api/notes.md。",
+    "description": "第一階段便條 API。搭配 local.postman_environment.json 使用。\n\n依資料夾順序執行即為完整流程：旅人 A 留便條（含只給自己看的旅遊紀錄）→ 旅人 B 發現並撿起 → 收藏。\nsignup 請求的 Tests script 會自動把 access_token 寫回 environment，不需手動貼 token。\n\n每輪由「匿名登入（A）」的 Pre-request script 隨機挑一個地點，所有座標都由它算出，因此可以反覆執行而不互相干擾——API 沒有刪除便條的路徑，固定座標會讓歷次殘留的便條累積在同一處，滿 20 張後就把本輪的目標便條擠出 nearby 的「最近 20 筆」。\n\n注意：apikey 只對本地 supabase（127.0.0.1）有效；夥伴機器用 `supabase status` 查自己的 key 後改 environment。\n\nwire format 權威：docs/api/openapi.yaml；語意規則：docs/api/notes.md。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -11,6 +11,28 @@
         {
           "name": "匿名登入（A）",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// 每輪換一個隨機地點，讓上一輪殘留的便條永遠落在本輪的 100m 之外。",
+                  "// 沒有這段的話：每輪會留下一張沒人撿走的便條（「再留一張」那張），",
+                  "// 累積滿 20 張後 nearby 的「最近 20 筆」就把本輪的目標便條擠出去，",
+                  "// 斷言開始失敗——而且看起來會像後端 bug。",
+                  "// API 沒有刪除便條的路徑（DELETE /rest/v1/notes 是 403），所以只能靠換地點。",
+                  "const lat = Math.random() * 120 - 60;   // 避開兩極，緯度帶 -60..60",
+                  "const lng = Math.random() * 360 - 180;",
+                  "pm.environment.set('base_lat', lat.toFixed(7));",
+                  "pm.environment.set('base_lng', lng.toFixed(7));",
+                  "// 位移一律只動緯度：每度的公尺數不隨經度改變，隨機地點才能保證距離穩定",
+                  "pm.environment.set('note2_lat',   (lat + 0.00013).toFixed(7)); //  ~14m 第二張便條",
+                  "pm.environment.set('private_lat', (lat + 0.00020).toFixed(7)); //  ~22m 旅遊紀錄（刻意放在探索半徑內，才驗得出它「在範圍內也不出現」）",
+                  "pm.environment.set('probe_lat',   (lat + 0.00027).toFixed(7)); //  ~30m B 的探索點（<50m ⇒ pickable）",
+                  "pm.environment.set('far_lat',     (lat + 0.00117).toFixed(7)); // ~130m 示範 too_far"
+                ],
+                "type": "text/javascript"
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -67,7 +89,7 @@
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 測試便條 {{$randomInt}}\",\"p_lat\":35.6595,\"p_lng\":139.7005,\"p_color\":7,\"p_style\":3,\"p_audience\":\"anyone\"}" },
+            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 測試便條 {{$randomInt}}\",\"p_lat\":{{base_lat}},\"p_lng\":{{base_lng}},\"p_color\":7,\"p_style\":3,\"p_audience\":\"anyone\"}" },
             "url": { "raw": "{{base_url}}/rest/v1/rpc/drop_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "drop_note"] }
           }
         },
@@ -94,7 +116,7 @@
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 第二張 {{$randomInt}}\",\"p_lat\":35.6596,\"p_lng\":139.7006}" },
+            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 第二張 {{$randomInt}}\",\"p_lat\":{{note2_lat}},\"p_lng\":{{base_lng}}}" },
             "url": { "raw": "{{base_url}}/rest/v1/rpc/drop_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "drop_note"] }
           }
         },
@@ -190,6 +212,66 @@
             "body": { "mode": "raw", "raw": "{\"p_limit\":1,\"p_cursor\":\"not-a-cursor\"}" },
             "url": { "raw": "{{base_url}}/rest/v1/rpc/my_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_notes"] }
           }
+        },
+        {
+          "name": "drop_note 旅遊紀錄（只給自己看）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + audience 為 self；省略的代號補伺服器預設 1', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const n = pm.response.json();",
+                  "  pm.expect(n.audience).to.eql('self');",
+                  "  pm.expect(n.color, '省略 p_color/p_style ⇒ 伺服器補預設 1（指向對照表裡一個具體項目）').to.eql(1);",
+                  "  pm.expect(n.style).to.eql(1);",
+                  "  pm.environment.set('private_note_id', n.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 旅遊紀錄 {{$randomInt}}\",\"p_lat\":{{private_lat}},\"p_lng\":{{base_lng}},\"p_audience\":\"self\"}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/drop_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "drop_note"] }
+          }
+        },
+        {
+          "name": "drop_note 錯誤示範：不認得的 audience",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('400 + invalid_audience（不靜默走預設——那會把私密便條變公開）', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  const e = pm.response.json();",
+                  "  pm.expect(e.code).to.eql('P0001');",
+                  "  pm.expect(e.message, 'message 是唯一的判斷依據；details 的有無兩邊都不得依賴').to.eql('invalid_audience');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_content\":\"不會被建立\",\"p_lat\":{{base_lat}},\"p_lng\":{{base_lng}},\"p_audience\":\"friends\"}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/drop_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "drop_note"] }
+          }
         }
       ]
     },
@@ -240,6 +322,8 @@
                   "  pm.expect(target).to.have.all.keys('id','color','style','coordinate','distanceM','pickable','createdAt');",
                   "  pm.expect(target.coordinate).to.have.all.keys('latitude','longitude');",
                   "  pm.expect(target.pickable).to.be.true;",
+                  "  const priv = body.items.find(h => h.id === pm.environment.get('private_note_id'));",
+                  "  pm.expect(priv, 'A 的旅遊紀錄就在 22m 外，但不得出現在任何人的探索結果').to.not.exist;",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -253,8 +337,37 @@
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_lat\":35.65977,\"p_lng\":139.7005}" },
+            "body": { "mode": "raw", "raw": "{\"p_lat\":{{probe_lat}},\"p_lng\":{{base_lng}}}" },
             "url": { "raw": "{{base_url}}/rest/v1/rpc/nearby_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "nearby_notes"] }
+          }
+        },
+        {
+          "name": "pickup_note 錯誤示範：別人的旅遊紀錄",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('400 + note_not_found（與不存在的便條同一個答案）', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  const e = pm.response.json();",
+                  "  pm.expect(e.code).to.eql('P0001');",
+                  "  pm.expect(e.message, '刻意不另設「這是私人便條」的 token——那等於向外人確認該座標有一張他看不到的便條').to.eql('note_not_found');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{private_note_id}}\",\"p_lat\":{{probe_lat}},\"p_lng\":{{base_lng}}}" },
+            "url": { "raw": "{{base_url}}/rest/v1/rpc/pickup_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "pickup_note"] }
           }
         },
         {
@@ -284,7 +397,7 @@
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":35.66067167,\"p_lng\":139.7005}" },
+            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":{{far_lat}},\"p_lng\":{{base_lng}}}" },
             "url": { "raw": "{{base_url}}/rest/v1/rpc/pickup_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "pickup_note"] }
           }
         },
@@ -314,7 +427,7 @@
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":35.65977,\"p_lng\":139.7005}" },
+            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":{{probe_lat}},\"p_lng\":{{base_lng}}}" },
             "url": { "raw": "{{base_url}}/rest/v1/rpc/pickup_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "pickup_note"] }
           }
         },
@@ -341,7 +454,7 @@
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":35.65977,\"p_lng\":139.7005}" },
+            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":{{probe_lat}},\"p_lng\":{{base_lng}}}" },
             "url": { "raw": "{{base_url}}/rest/v1/rpc/pickup_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "pickup_note"] }
           }
         },
