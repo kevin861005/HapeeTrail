@@ -4,7 +4,7 @@ info:
   version: "3.3.0"
   license:
     name: Proprietary
-    url: https://github.com/kevin861005/trailstamp
+    url: https://github.com/kevin861005/HapeeTrail
   description: |
     第一階段便條 API。所有業務 endpoint 都是 Supabase PostgREST 的 RPC（POST /rest/v1/rpc/{fn}）。
 
@@ -24,10 +24,6 @@ servers:
       一直在線、真機用行動網路也連得到，不依賴任何人的電腦開著。
   - url: http://127.0.0.1:54321
     description: 本地開發（`supabase start`；只有跑起它的那台機器連得到）
-  - url: http://kevinchenmacbook-air.tail0cb7bc.ts.net:54321
-    description: >-
-      Kevin 開發機（Tailscale tailnet 內可達）。已被上面的 hosted 取代，
-      留著只為了偶爾要打「還沒推上去的本機改動」；需要對方在 tailnet 內且機器開著。
 tags:
   - name: auth
     description: 匿名 session（Supabase GoTrue）
