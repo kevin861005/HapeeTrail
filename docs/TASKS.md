@@ -7,16 +7,31 @@
 （無）
 
 ## 待辦
-- [ ] ⏸️ **T2** 部署到 hosted Supabase 專案（`supabase link` + `db push`；先確認 PostGIS 在 `extensions` schema）
-  ——等什麼：進入大量測試階段（2026-07-12 決定：開發期以本機 supabase 為主）
-  - locale 依賴（T16／ADR-0009）已由 migration 自己擋：ctype 不認得 Unicode 空白就
-    `db push` 失敗。**若部署時真的撞到這個例外**，退路是把 `\s` 換成顯式字元集的 `btrim`
 - [ ] **T3** UGC 檢舉機制（App Store 審查前必須；`report_note` RPC + 隱藏 flag）
 
 ## 已完成
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T2** 部署到 hosted Supabase 專案（東京）
+  ✅ 2026-07-29：`https://iwkuywlrggxolyoiyrui.supabase.co`（Northeast Asia / Tokyo）。
+  14 個 migration 全數套用，`supabase migration list --linked` 的 local／remote 逐一對上。
+  **region 走了一次回頭路**：第一次建立的專案在 South Asia (Mumbai)——那是 Supabase 依
+  GeoIP 給的推薦，而 CLAUDE.md 訂的是東京。實測確定打到資料庫的請求約 150ms；
+  Supabase 的 region 建立後不可改，趁專案還空著、夥伴還沒串時重開一個東京的。
+  換區後實測（連線重用）`nearby_notes` 首位元組 **67–77ms**（含 PostGIS 查詢）。
+  新增 `supabase/tests/hosted-smoke.sh`——只驗「換一台機器才會壞」的事：匿名登入開關、
+  PostGIS 的 schema、資料庫 locale（T16/ADR-0009 的 Unicode 空白 trim）、契約 RPC 可達、
+  以及契約外路徑確實不可達（ADR-0007）。**hosted 15 項全過**；先對本機跑過確認腳本本身正確，
+  過程中修掉腳本自己一個 bug（全形括號被 bash 吃進變數名，`set -u` 下直接炸）。
+  端到端核心迴圈在 hosted 實跑通過：留便條 → 30m 探索（`distanceM=30`、`pickable=true`）
+  → 129m 撿取得 `too_far` 附真實距離 → 走近撿起 → 冪等重試 → 進收藏。
+  newman 對 hosted 15/15。openapi 的 `servers` 改以 hosted 為首（夥伴該用的那個），
+  Tailscale 位址降為備援並註明已被取代；新增 `docs/api/postman/hosted.postman_environment.json`
+  （**apikey 刻意留空不進 git**，附取得指令——它雖然設計上就會進 iOS binary，
+  但要不要出現在可能公開的 repo 是 Kevin 的決定）。
+  遇到的兩個環境陷阱已寫進煙霧測試：新專案的 Anonymous sign-ins 預設關閉（回 422），
+  且 dashboard 上撥開關後**要按 Save 才生效**
 - [x] **T4** 便條 TTL：未撿的公開便條 90 天後退出地圖
   ✅ 2026-07-29：`supabase/migrations/20260729010000_note_ttl.sql`；決策記為 **ADR-0010**。
   **原描述「技術上為 pg_cron 一句 delete」低估了範圍**——TTL 要進四個地方（探索、撿取、

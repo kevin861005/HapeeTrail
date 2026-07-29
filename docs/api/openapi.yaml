@@ -18,15 +18,16 @@ info:
 
     Postman：直接 import 本檔即可產生 collection。
 servers:
+  - url: https://iwkuywlrggxolyoiyrui.supabase.co
+    description: >-
+      測試環境（Supabase hosted，東京 ap-northeast-1）——**夥伴請用這個**。
+      一直在線、真機用行動網路也連得到，不依賴任何人的電腦開著。
   - url: http://127.0.0.1:54321
-    description: 本地開發（supabase start）
+    description: 本地開發（`supabase start`；只有跑起它的那台機器連得到）
   - url: http://kevinchenmacbook-air.tail0cb7bc.ts.net:54321
-    description: Kevin 開發機（Tailscale tailnet 內可達；夥伴選這個）
-  - url: https://{project-ref}.supabase.co
-    description: Hosted（T2 部署後）
-    variables:
-      project-ref:
-        default: TBD
+    description: >-
+      Kevin 開發機（Tailscale tailnet 內可達）。已被上面的 hosted 取代，
+      留著只為了偶爾要打「還沒推上去的本機改動」；需要對方在 tailnet 內且機器開著。
 tags:
   - name: auth
     description: 匿名 session（Supabase GoTrue）
