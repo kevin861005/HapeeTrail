@@ -110,6 +110,42 @@ class NoteService {
 
 	private static final String PAGE_AFTER = PAGE.formatted(WIRE_COLUMNS, "and (created_at, id) < (:key, :id)");
 
+	/** 探索半徑與撿取半徑，公尺。兩者都只出現在 SQL 語句裡——Java 永遠不比較距離。 */
+	private static final double EXPLORE_RADIUS_M = 100.0;
+
+	private static final double PICKUP_RADIUS_M = 50.0;
+
+	/** 探索一次最多回幾個 pin（截斷不另行標示：無分頁，最近的 20 個就是全部）。 */
+	private static final int MAX_HINTS = 20;
+
+	/** 呼叫者當下的位置。組成點的是 SQL，不是 Java——距離、半徑、pickable 全都在這個型別上算。 */
+	private static final String CALLER_POINT = "extensions.st_setsrid(extensions.st_makepoint(:lng, :lat), 4326)"
+			+ "::extensions.geography";
+
+	/**
+	 * 探索：100m 內、非自己的、未撿走、未過期、公開的便條，最近優先取 20。
+	 *
+	 * <p>前兩個 where 條件與 {@code notes_active_location_gix} 的 partial index 述詞**逐字一致**
+	 * ——不一致的話查詢計畫用不到它，探索會靜默退化成全表掃描。TTL 條件進不了索引述詞
+	 * （{@code now()} 不是 immutable），落在 Filter 是預期的計畫形狀。
+	 *
+	 * <p>{@code distanceM}、{@code pickable} 與撿取的 {@code too_far} 距離都出自這裡同一組
+	 * geography 運算：兩份算法遲早分歧，症狀是「探索說 60 公尺、走過去撿卻說還差 70 公尺」。
+	 */
+	private static final String NEARBY = """
+			select n.id, n.lat, n.lng, n.color, n.style, n.created_at,
+			       round(extensions.st_distance(n.location, %1$s))::int as distance_m,
+			       extensions.st_dwithin(n.location, %1$s, %3$s) as pickable
+			  from public.notes n
+			 where n.picked_up_at is null
+			   and n.audience = 'anyone'
+			   and n.author_id <> :traveler
+			   and n.created_at > now() - make_interval(secs => %4$d)
+			   and extensions.st_dwithin(n.location, %1$s, %2$s)
+			 order by distance_m
+			 limit %5$d
+			""".formatted(CALLER_POINT, EXPLORE_RADIUS_M, PICKUP_RADIUS_M, TTL.toSeconds(), MAX_HINTS);
+
 	private final JdbcClient jdbc;
 
 	NoteService(JdbcClient jdbc) {
@@ -118,16 +154,10 @@ class NoteService {
 
 	/** 依當前位置留下便條，回傳 trim 後的正規 Note。 */
 	Note drop(UUID author, DropRequest request) {
-		// 缺必填欄位（含座標少一半）走型別／格式錯誤那一類，與 openapi 的 required 逐一對應；
-		// invalid_coordinates 因此只代表一件事：值在、但越界。
-		if (request == null || request.content() == null || request.coordinate() == null
-				|| request.coordinate().latitude() == null || request.coordinate().longitude() == null) {
+		if (request == null || request.content() == null) {
 			throw malformed();
 		}
-		Coordinate at = request.coordinate();
-		if (!inRange(at.latitude(), 90) || !inRange(at.longitude(), 180)) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_coordinates", null);
-		}
+		Coordinate at = located(request.coordinate());
 		// 順序不能反：上限量的是 trim **之後**的內容。
 		String content = EDGE_WHITESPACE.matcher(request.content()).replaceAll("");
 		if (content.isEmpty()) {
@@ -199,6 +229,34 @@ class NoteService {
 	}
 
 	/**
+	 * 附近的便條 pin。內容與作者刻意不在回傳裡；判定與距離全由 {@link #NEARBY} 那一句 SQL 做完
+	 * ——這個方法只負責驗座標、綁參數、把列搬成 wire 形狀。
+	 */
+	NearbyResult nearby(UUID traveler, NearbyRequest request) {
+		Coordinate at = located((request != null) ? request.coordinate() : null);
+		return new NearbyResult(this.jdbc.sql(NEARBY)
+			.param("traveler", traveler)
+			.param("lat", at.latitude())
+			.param("lng", at.longitude())
+			.query(NoteService::toHint)
+			.list());
+	}
+
+	/**
+	 * 座標的共用閘門。缺欄位（含只給一半）走型別／格式錯誤那一類，與 openapi 的 required
+	 * 逐一對應；{@code invalid_coordinates} 因此只代表一件事：值在、但越界。
+	 */
+	private static Coordinate located(Coordinate at) {
+		if (at == null || at.latitude() == null || at.longitude() == null) {
+			throw malformed();
+		}
+		if (!inRange(at.latitude(), 90) || !inRange(at.longitude(), 180)) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_coordinates", null);
+		}
+		return at;
+	}
+
+	/**
 	 * {@code color} 與 {@code style} 共用的代號驗證（契約的 {@code StyleCode}，兩欄同一套規則）。
 	 * null／越界一律走契約的 token，不讓它撞到 smallint 的原生溢位。
 	 */
@@ -228,6 +286,14 @@ class NoteService {
 				// 旅遊紀錄不會過期 ⇒ null；已撿走的仍保有 expiresAt（那是關於這張便條的事實）。
 				audience.equals("anyone") ? WIRE_TS.format(createdAt.plus(TTL)) : null,
 				(pickedUpAt != null) ? WIRE_TS.format(pickedUpAt) : null);
+	}
+
+	/** {@code distanceM} 與 {@code pickable} 直接取 SQL 算好的欄位——不在這裡重算，也沒得重算。 */
+	private static NearbyHint toHint(ResultSet rs, int rowNum) throws SQLException {
+		return new NearbyHint(rs.getObject("id", UUID.class), rs.getInt("color"), rs.getInt("style"),
+				new Coordinate(rs.getDouble("lat"), rs.getDouble("lng")), rs.getInt("distance_m"),
+				rs.getBoolean("pickable"),
+				WIRE_TS.format(rs.getObject("created_at", OffsetDateTime.class).toInstant()));
 	}
 
 	/**

@@ -28,3 +28,22 @@ record DropRequest(String content, Coordinate coordinate, Integer color, Integer
 /** 列表 envelope：items 永遠是陣列（不會是 null），nextCursor 為 null ＝ 沒有更多。 */
 record NotePage(List<Note> items, String nextCursor) {
 }
+
+/** {@code POST /v1/notes/nearby} 的 body。座標刻意在 body 不在 query：query 會把它寫進存取日誌與各層 proxy 的快取。 */
+record NearbyRequest(Coordinate coordinate) {
+}
+
+/**
+ * 探索 pin，契約凍結的 7 鍵。**沒有 content**——內容是走進 50m 撿起的獎勵；
+ * 也沒有任何身分欄位。代號在，是為了地圖 pin 能渲染成作者選的樣式。
+ *
+ * <p>{@code distanceM} 與 {@code pickable} 都是伺服器算的快照：前者是整數公尺，
+ * 後者是「呼叫當下在撿取半徑內」，撿起時伺服器會重驗（client 勿硬編半徑）。
+ */
+record NearbyHint(UUID id, int color, int style, Coordinate coordinate, int distanceM, boolean pickable,
+		String createdAt) {
+}
+
+/** 探索 envelope：無分頁（上限 20 就是全部），但仍是物件而非裸陣列——日後加欄位才不是破壞性變更。 */
+record NearbyResult(List<NearbyHint> items) {
+}

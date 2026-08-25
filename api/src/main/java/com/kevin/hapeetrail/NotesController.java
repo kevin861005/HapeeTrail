@@ -25,6 +25,12 @@ class NotesController {
 		return this.notes.drop(traveler(jwt), request);
 	}
 
+	/** 探索是 POST 而非 GET：座標放 body，才不會被存取日誌與各層 proxy 的快取收走。 */
+	@PostMapping("/v1/notes/nearby")
+	NearbyResult nearby(@AuthenticationPrincipal Jwt jwt, @RequestBody(required = false) NearbyRequest request) {
+		return this.notes.nearby(traveler(jwt), request);
+	}
+
 	/** {@code limit} 省略 ＝ 50、{@code cursor} 省略 ＝ 第一頁；兩者都是型別檢查在先。 */
 	@GetMapping("/v1/me/notes")
 	NotePage myNotes(@AuthenticationPrincipal Jwt jwt, @RequestParam(required = false) Long limit,
