@@ -11,9 +11,11 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
@@ -29,6 +31,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
@@ -79,6 +82,10 @@ class DropNoteTest extends SupabaseDbTest {
 
 	@LocalServerPort
 	int port;
+
+	/** 併發超越量的上界。從設定讀而不是寫死：池子調大時這條測試要跟著鬆，不然會變成假紅。 */
+	@Value("${spring.datasource.hikari.maximum-pool-size}")
+	int poolSize;
 
 	// ─── 正常路徑與 wire 形狀 ────────────────────────────────────────────────
 
@@ -393,6 +400,51 @@ class DropNoteTest extends SupabaseDbTest {
 			.isEqualTo("anyone");
 	}
 
+	/**
+	 * 併發超越量（票 09）。計數與 INSERT 雖然是同一句，但 READ COMMITTED 下每個語句各自取
+	 * 快照 ⇒ 同時在途的請求會看到同一個「還沒滿」的計數，於是一起擠進去。兩個上限因此是
+	 * **advisory** 的（ADR-0003／0011 明列的已接受後果）：它防的是匿名帳號灑滿地圖，不是精準配額。
+	 *
+	 * <p>斷言的上界是 **Hikari 池大小**，不是在途請求數：同時只有 {@code poolSize} 條語句
+	 * 到得了資料庫，全部看到同一個「還沒滿」的計數就是最壞情況 ⇒ 至多 {@code 上限 − 1 ＋ 池}。
+	 * 用在途請求數當上界的話（50 上限、40 平行 → 允許到 89 張）連 SQL 版的 65 都會通過，
+	 * 那種斷言擋不住任何退化。實際張數另外印出來記進票 09。
+	 *
+	 * <p>真的需要硬上限，修法是 DB constraint／trigger，不是把規則搬回 RPC。
+	 */
+	@ParameterizedTest(name = "{0} 上限 {1}、{2} 條平行請求")
+	@MethodSource
+	void concurrentDropsOvershootTheLimitByAtMostTheNumberInFlight(String audience, int limit, int inFlight)
+			throws Exception {
+		Traveler me = traveler();
+		seed(me, limit - 1, audience, "now()", null);
+		Map<String, Object> body = body(me, "併發");
+		body.put("audience", audience);
+		HttpRequest request = dropRequest(me, JSON.writeValueAsString(body));
+		HttpClient client = HttpClient.newHttpClient();
+
+		// 中間這個 toList 不可省：少了它就變成一條送完才送下一條，根本沒有競爭。
+		List<CompletableFuture<HttpResponse<String>>> calls = IntStream.range(0, inFlight)
+			.mapToObj((i) -> client.sendAsync(request, BodyHandlers.ofString(StandardCharsets.UTF_8)))
+			.toList();
+		calls.forEach(CompletableFuture::join);
+
+		long stored = admin()
+			.sql("select count(*) from public.notes where author_id = ?::uuid and audience = ?")
+			.params(me.id().toString(), audience)
+			.query(Long.class)
+			.single();
+		System.out.printf("[票 09 併發超越量] audience=%s 上限=%d 平行=%d → 實際 %d 張（超越 %d）%n", audience, limit,
+				inFlight, stored, stored - limit);
+		assertThat(stored).describedAs("至少一條要成功，且超越量以 Hikari 池大小為界")
+			.isBetween((long) limit, (long) (limit - 1 + this.poolSize));
+	}
+
+	static Stream<Arguments> concurrentDropsOvershootTheLimitByAtMostTheNumberInFlight() {
+		return Stream.of(Arguments.of("anyone", 50, 20), Arguments.of("anyone", 50, 40),
+				Arguments.of("self", 5000, 20), Arguments.of("self", 5000, 40));
+	}
+
 	// ─── 錯誤信封 ────────────────────────────────────────────────────────────
 
 	/** 「有 code 才是業務錯誤」——型別／格式錯誤不得有 code。 */
@@ -501,6 +553,15 @@ class DropNoteTest extends SupabaseDbTest {
 
 	private HttpResponse<String> drop(Traveler traveler, Map<String, Object> body) throws Exception {
 		return post("/v1/notes", traveler, JSON.writeValueAsString(body));
+	}
+
+	/** 併發測試要先把全部請求送出去才 join，所以這裡只組請求、不送。 */
+	private HttpRequest dropRequest(Traveler traveler, String body) {
+		return HttpRequest.newBuilder(URI.create("http://localhost:" + this.port + "/v1/notes"))
+			.header("Content-Type", "application/json")
+			.header("Authorization", "Bearer " + traveler.token())
+			.POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+			.build();
 	}
 
 	private HttpResponse<String> post(String path, Traveler traveler, String body) throws Exception {

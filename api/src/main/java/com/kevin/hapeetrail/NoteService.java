@@ -168,7 +168,7 @@ class NoteService {
 
 	/**
 	 * 撿起。獨佔性的全部保證就是這一句：check 與 write 同語句同 row version，沒有競態窗口。
-	 * happy path 因此只有一次 round trip，診斷只在它影響 0 列時才跑。
+	 * 診斷只在它影響 0 列時才跑；happy path 是頻率閘門（{@link #GATE}）加這一句，兩次往返。
 	 *
 	 * <p>五個條件各擋一種便條：已被撿走的、旅遊紀錄（探索看不到它，但 id 未必永不外流）、
 	 * 自己的、已過期的、太遠的。{@code picked_up_at} 用 {@code now()} 而不是 Java 的時刻
@@ -189,6 +189,43 @@ class NoteService {
 			   and extensions.st_dwithin(n.location, %1$s, %3$s)
 			returning %4$s
 			""".formatted(CALLER_POINT, TTL.toSeconds(), PICKUP_RADIUS_M, WIRE_COLUMNS);
+
+	/** 撿取頻率：滾動一小時 60 次。撿取是破壞性的（別人的便條就此離開地圖），所以它有閘門而探索沒有。 */
+	private static final int MAX_PICKUPS = 60;
+
+	private static final Duration PICKUP_WINDOW = Duration.ofHours(1);
+
+	/**
+	 * 頻率閘門。取「窗內第 60 新的那次撿取」而不是 {@code count(*)}：它存在 ⇔ 窗內已有
+	 * ≥60 次，而它滑出窗的那一刻正是計數降回 59、可以再撿的時刻——閘門與建議秒數因此是
+	 * 同一次索引掃描（{@code notes_picker_ix}）的兩個讀法，不會各算各的而分歧。
+	 *
+	 * <p>回傳值直接就是 {@code retryAfterS}；沒有列 ＝ 閘門沒跳。
+	 *
+	 * <p>ponytail: advisory 上限，防的是拿座標掃街清空一座城市，不是精準配額
+	 * （匿名註冊無限量，換帳號就繞得過——同 ADR-0003 的立場）。
+	 */
+	private static final String GATE = """
+			select ceil(extract(epoch from
+			         n.picked_up_at + make_interval(secs => %2$d) - now()))::int
+			  from public.notes n
+			 where n.picked_up_by = :traveler
+			   and n.picked_up_at > now() - make_interval(secs => %2$d)
+			 order by n.picked_up_at desc
+			offset %1$d limit 1
+			""".formatted(MAX_PICKUPS - 1, PICKUP_WINDOW.toSeconds());
+
+	/**
+	 * 閘門跳起後唯一的例外：這張已經是呼叫者的 ⇒ 這是重送，不是新的撿取。冪等重試不新增
+	 * 任何撿取，擋下它等於在旅人撿得最勤的時候收回契約 §6「timeout 後可安心重試同一筆」。
+	 * 判準與 {@link #verdict} 的冪等分支是同一個（{@code picked_up_by} 就是我）。
+	 *
+	 * <p>只在閘門跳起時才跑——happy path 是閘門一句 ＋ UPDATE 一句，不多這次往返。
+	 */
+	private static final String ALREADY_MINE = """
+			select %s from public.notes n
+			 where n.id = :id and n.picked_up_by = :traveler
+			""".formatted(WIRE_COLUMNS);
 
 	/**
 	 * 失敗診斷：一句 SQL 把「為什麼撿不到」的六種可能一次算完，Java 只負責照固定順序讀。
@@ -241,18 +278,15 @@ class NoteService {
 			throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_audience", null);
 		}
 
-		JdbcClient.StatementSpec statement = this.jdbc.sql(isPublic ? INSERT_PUBLIC : INSERT_PRIVATE)
+		return this.jdbc.sql(isPublic ? INSERT_PUBLIC : INSERT_PRIVATE)
 			.param("author", author)
 			.param("content", content)
 			.param("lat", at.latitude())
 			.param("lng", at.longitude())
 			.param("color", color)
 			.param("style", style)
-			.param("audience", audience);
-		if (isPublic) {
-			statement = statement.param("ttlCutoff", OffsetDateTime.now(ZoneOffset.UTC).minus(TTL));
-		}
-		return statement.query(NoteService::toNote)
+			.param("audience", audience)
+			.query(NoteService::toNote)
 			.optional()
 			.orElseThrow(() -> isPublic
 					? new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "active_note_limit",
@@ -325,7 +359,13 @@ class NoteService {
 	}
 
 	/**
-	 * 走進 50m 撿起，全世界只有一人撿得到同一張。happy path 一句 SQL；影響 0 列才診斷。
+	 * 走進 50m 撿起，全世界只有一人撿得到同一張。happy path 是**閘門一句 ＋ UPDATE 一句**，
+	 * 影響 0 列才診斷；獨佔性仍由那一句 UPDATE 獨力保證（check 與 write 同語句同 row version），
+	 * 閘門讀到的是別張便條的撿取紀錄，不參與這張的競爭。
+	 *
+	 * <p>閘門併不進 UPDATE 的 {@code where}：那樣被擋下時會落進診斷，而診斷會附上距離
+	 * ——限流下正好不能給的東西（否則刷爆自己的額度就換到一個距離 oracle，T15 的立場）。
+	 * 順序與 v3.3 的 {@code pickup_note} 逐字相同。
 	 *
 	 * <p>刻意是 {@code public}：{@code @Transactional} 只作用在 public 方法上
 	 * （{@code AnnotationTransactionAttributeSource.publicMethodsOnly} 預設為 true），
@@ -334,6 +374,20 @@ class NoteService {
 	@Transactional
 	public Note pickup(UUID traveler, UUID id, PickupRequest request) {
 		Coordinate at = located((request != null) ? request.coordinate() : null);
+		Integer retryAfterS = this.jdbc.sql(GATE)
+			.param("traveler", traveler)
+			.query(Integer.class)
+			.optional()
+			.orElse(null);
+		if (retryAfterS != null) {
+			return this.jdbc.sql(ALREADY_MINE)
+				.param("traveler", traveler)
+				.param("id", id)
+				.query(NoteService::toNote)
+				.optional()
+				.orElseThrow(() -> new ApiException(HttpStatus.TOO_MANY_REQUESTS, "pickup_rate_limited",
+						Map.of("retryAfterS", retryAfterS)));
+		}
 		return this.jdbc.sql(PICKUP)
 			.param("traveler", traveler)
 			.param("id", id)

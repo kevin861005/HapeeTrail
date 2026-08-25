@@ -30,7 +30,14 @@ class ApiErrors extends ResponseEntityExceptionHandler {
 	ResponseEntity<Problem> business(ApiException ex) {
 		String code = ex.getMessage();
 		String title = (code != null) ? code : ex.status().getReasonPhrase();
-		return respond(ex.status(), new Problem(ex.status().value(), title, code, ex.details()));
+		ResponseEntity.BodyBuilder response = respond(ex.status());
+		// 標準 Retry-After 直接取 details 裡的那個數字（契約：兩者相同）。從同一個值長出來的
+		// 兩種表達沒有第二個來源可以漂移——各算一次遲早會分歧，而 client 兩邊都在讀。
+		Object retryAfterS = (ex.details() != null) ? ex.details().get("retryAfterS") : null;
+		if (retryAfterS != null) {
+			response.header(HttpHeaders.RETRY_AFTER, retryAfterS.toString());
+		}
+		return response.body(new Problem(ex.status().value(), title, code, ex.details()));
 	}
 
 	/**
@@ -42,11 +49,12 @@ class ApiErrors extends ResponseEntityExceptionHandler {
 	protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body, HttpHeaders headers,
 			HttpStatusCode status, WebRequest request) {
 		HttpStatus resolved = HttpStatus.valueOf(status.value());
-		return respond(resolved, new Problem(resolved.value(), resolved.getReasonPhrase(), null, null));
+		return respond(resolved).body(new Problem(resolved.value(), resolved.getReasonPhrase(), null, null));
 	}
 
-	private static <T> ResponseEntity<T> respond(HttpStatusCode status, T body) {
-		return ResponseEntity.status(status).contentType(MediaType.APPLICATION_PROBLEM_JSON).body(body);
+	/** 兩條路同一個信封：contentType 只寫在這裡，漏掉它的回應會被 client 當成非 problem+json。 */
+	private static ResponseEntity.BodyBuilder respond(HttpStatusCode status) {
+		return ResponseEntity.status(status).contentType(MediaType.APPLICATION_PROBLEM_JSON);
 	}
 
 	/**
