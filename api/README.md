@@ -15,16 +15,16 @@ cd api && ./mvnw test        # 需要 Docker Desktop 開著（Testcontainers 起
 
 | 環境變數 | 值 |
 |---|---|
-| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://<pooler-host>:5432/postgres`（session pooler，**5432 不是 6543**） |
-| `SPRING_DATASOURCE_USERNAME` | `hapeetrail_api.<project-ref>`（Supavisor 用 `<角色>.<專案ref>` 認 tenant） |
+| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require`（session pooler，**5432 不是 6543**） |
+| `SPRING_DATASOURCE_USERNAME` | `hapeetrail_api.iwkuywlrggxolyoiyrui`（Supavisor 用 `<角色>.<專案ref>` 認 tenant——對自訂角色也適用，已探針證實） |
 | `SPRING_DATASOURCE_PASSWORD` | 一次性手動 SQL 設的角色密碼 |
-| `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI` | `https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json` |
+| `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI` | `https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1/.well-known/jwks.json` |
 
 第五個**有預設值（RS256），漏了不會啟動失敗、只會每個請求靜靜 401**——所以打 hosted JWKS 時一定要帶：
 
 | 環境變數 | 值 |
 |---|---|
-| `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWS_ALGORITHMS` | `RS256,ES256`（Supabase 非對稱金鑰預設是 ES256） |
+| `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWS_ALGORITHMS` | `RS256,ES256`——**這個專案實測就是 `ES256`**，少了它每顆真 token 都 401 |
 
 repo 內沒有任何機密值。`fly.toml` 只放可公開的設定；Fly 上這一個由 `fly.toml` 的 `[env]` 帶，
 **為什麼不能放 `application.properties`** 寫在那裡的註解。
@@ -43,31 +43,39 @@ docker run --rm -p 8080:8080 \
 
 ## 部署到 Fly.io（東京 `nrt`）
 
+> **狀態（2026-08-25）：刻意延後。** 步驟 1–3 已完成、flyctl 已安裝登入；
+> 只剩 `fly` 那三步，等 iOS 夥伴約定開工日前幾天再做。理由與已查證的事實見
+> `.scratch/java-rewrite/issues/10-first-deploy-fly.md`。Fly 無免費方案，
+> 常駐 shared-cpu-1x／1GB 約 US$5.70／月，沒人用時開著是純燒錢。
+
 ### 一次性設定
 
 ```bash
 brew install flyctl && fly auth login
 
 # 1) 準備 migration 套到 hosted（建 hapeetrail_api 角色、授權、RLS policy）
+#    ✅ 2026-08-25 已完成
 supabase db push        # 會問 hosted 的 DB 密碼
 
 # 2) 角色密碼：只設一次，值只存在 fly secrets（不進 migration、不進 git）
-#    在 Supabase dashboard 的 SQL Editor 執行：
-#      alter role hapeetrail_api password '<自己產一組長亂碼>';
+#    ✅ 2026-08-25 已完成。密碼用 `openssl rand -base64 24` 產，在 SQL Editor 執行：
+#      alter role hapeetrail_api password '<那組密碼>';
+#    ⚠️ 執行完把 SQL Editor 的 query 清掉——dashboard 會留 query history。
 
 # 3) dashboard → Authentication → Sign In / Providers → 開啟 Allow anonymous sign-ins，**按 Save**
-#    整個 App 靠匿名登入；沒開的話 /auth/v1/signup 回 422 anonymous_provider_disabled，
-#    下面驗證那條 curl 拿不到 token。
+#    ✅ 2026-08-25 確認已開啟。整個 App 靠匿名登入；沒開的話 /auth/v1/signup 回
+#    422 anonymous_provider_disabled，下面驗證那條 curl 拿不到 token。
 
 # 4) 建 app（不要讓 fly launch 覆寫既有的 fly.toml）
 cd api && fly apps create hapeetrail
 
-# 5) secrets（dashboard → Connect → Session pooler 抄連線資訊）
+# 5) secrets（pooler host 已探針證實是 aws-0-，不是 aws-1-）
+# 值全部已查證，只有密碼要你自己貼（它不該出現在任何檔案裡）
 fly secrets set --app hapeetrail \
-  SPRING_DATASOURCE_URL='jdbc:postgresql://<pooler-host>:5432/postgres' \
-  SPRING_DATASOURCE_USERNAME='hapeetrail_api.<project-ref>' \
+  SPRING_DATASOURCE_URL='jdbc:postgresql://aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require' \
+  SPRING_DATASOURCE_USERNAME='hapeetrail_api.iwkuywlrggxolyoiyrui' \
   SPRING_DATASOURCE_PASSWORD='<步驟 2 那組>' \
-  SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI='https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json'
+  SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI='https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1/.well-known/jwks.json'
 ```
 
 ### 每次部署
@@ -87,7 +95,7 @@ cd api && fly deploy --ha=false
 
 ```bash
 APP=https://hapeetrail.fly.dev
-REF=<project-ref>
+REF=iwkuywlrggxolyoiyrui
 ANON=$(supabase projects api-keys --project-ref $REF | grep publishable | awk '{print $4}')
 
 curl -s -o /dev/null -w '%{http_code}\n' $APP/actuator/health          # 200

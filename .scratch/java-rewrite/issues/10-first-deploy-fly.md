@@ -4,7 +4,8 @@
 
 **Blocked by:** 04
 
-**Status:** in-progress — 容器與設定完成並本機驗過；上真機的部分等 Fly 帳號與 hosted 專案 restore
+**Status:** 部分完成、**其餘刻意延後到票 11 前**——容器／設定／runbook 全部做完並驗過；
+上真機那半段等「夥伴要開工」才做（決策與理由見下方〈2026-08-25 決定延後部署〉）
 
 - [x] 容器：`spring-boot:build-image` 或最小 Dockerfile；映像能在本機以環境變數起動
 - [ ] Fly app 建在 `nrt`；1 shared CPU／1GB；`min_machines_running=1`、不 auto-stop；health check 打 `/actuator/health`
@@ -127,3 +128,63 @@ health check 打 `/actuator/health`（`grace_period=30s`、`timeout=5s`）、`fo
   所以留著，最後一個 checkbox 也維持未勾——下次部署完就是刪那三行。
 - 基礎映像用的是浮動 tag（`21-jdk`／`21-jre`），重建不是 bit-for-bit 可重現。MVP 不值得釘 digest，
   但知道一下。
+
+---
+
+## 2026-08-25 決定延後部署（使用者裁決）
+
+**決定**：不現在部署，以本機為開發環境；票 10 上真機的部分（`fly apps create`／`secrets`／`deploy`
+＋四條驗證 curl ＋延遲實測）**併到票 11 驗收前**做。
+
+**理由**（不是省事，是這一票的價值已經先被兌現掉大半）：
+
+1. 票 10 存在的理由是「早發現三件只有上真機才會壞的事」，**今天從本機證掉兩件**（見下方查證表）。
+   剩下只有 secrets 注入沒證，而那件事票 11 驗收前做一次就夠。
+2. **iOS 夥伴尚未開工**（HANDOFF 記載 2026-08-25 確認），現在沒有人在等這個環境。
+3. Fly 沒有免費方案，常駐 `shared-cpu-1x`／1GB 約 **US$5.70／月**；沒有人在用的期間開著是純燒錢。
+   免費替代方案都有致命傷：Koyeb 只有 Frankfurt／Washington（無 Tokyo，跨洲打 Supabase）、
+   Render 512MB／15 分鐘睡著／喚醒約一分鐘（JVM 冷啟）、Oracle Always Free 2026-06 從
+   4 OCPU/24GB 砍半成 2/12 且 ARM 常 Out of Capacity、又是 VM 不是容器平台（TLS 要自己架）。
+   **ADR-0011 白紙黑字決定 Fly.io `nrt`，換平台是 ADR 等級的決定，不在本票範圍。**
+4. 本機開發完全不需要雲端：票 05–09 五支端點都由 Testcontainers 覆蓋。
+5. 「本機當夥伴的測試環境」不可行——要嘛同區網（無 TLS、真機測試常不同網），
+   要嘛開 tunnel，兩種都要**你的 Mac 一直開著**，他會在你睡覺時斷線。
+
+**重新開工的觸發條件**：與 iOS 夥伴約定的開工日前幾天。那時走 `api/README.md` 的
+「一次性設定」，其中步驟 1–5 今天已經做完（見下表），只剩 `fly` 那三步。
+
+## 今天實際查證到的（下次不用重查）
+
+| 項目 | 結果 | 怎麼證的 |
+|---|---|---|
+| hosted 專案 | ✅ 已 restore，`ACTIVE_HEALTHY`，GoTrue v2.195.0（restore 後約 105 秒才起來） | `supabase projects list -o json`、`/auth/v1/health` |
+| **JWT 簽章金鑰** | ✅ **已是非對稱，演算法 `ES256`**（EC P-256，kid `5b42f887…`） | `GET /auth/v1/.well-known/jwks.json` |
+| 匿名登入 | ✅ 已開啟（沒開會回 422 `anonymous_provider_disabled`） | `POST /auth/v1/signup` body `{}` 拿到 200 |
+| 真 token 形狀 | ✅ `alg=ES256`、`aud=authenticated`、`role=authenticated`、`is_anonymous=true`、`sub` 存在 | 解 JWT header／payload |
+| 準備 migration | ✅ `20260825000000_hapeetrail_api_role.sql` 已套上 hosted | `supabase db push` |
+| `hapeetrail_api` 權限 | ✅ 七項全對：`rolcanlogin=true`、notes 只有 `INSERT,SELECT,UPDATE`（**無 DELETE**）、`public`／`extensions` USAGE 皆 true、policy `notes_api_all`＝`ALL roles=hapeetrail_api`、`notes` RLS 開著、**對 `auth.users` 無 SELECT** | SQL Editor 查 `pg_roles`／`information_schema.role_table_grants`／`pg_policies` |
+| 角色密碼 | ✅ 已由使用者以一次性 SQL 設定（值只在他手上，不在 repo、不在我的 context） | — |
+| **pooler host** | ✅ **`aws-0-ap-northeast-1.pooler.supabase.com`**（`aws-1-` 不是這個 tenant） | 故意用錯密碼探針：`aws-0` 回「password authentication failed **for user hapeetrail_api**」＝tenant 與角色都找到；`aws-1` 回「tenant/user **not found**」 |
+| **pooler IPv4 可達** | ✅ 解析到 IPv4 `52.68.3.1`／`54.64.190.72`，從本機（Supabase 之外）連得到 TCP 並走到認證階段 | 同上探針 |
+| **`<角色>.<專案ref>` 格式** | ✅ 對自訂角色有效——`hapeetrail_api.iwkuywlrggxolyoiyrui` 真的被 Supavisor 認出來 | 同上探針（錯誤訊息是「密碼錯」不是「找不到」） |
+| `sslmode=require` | ✅ pooler 接受，一樣走到認證階段（Fly→Supabase 走公網，不讓它有機會靜默降級明文） | 同上探針加 `sslmode=require` |
+| flyctl | ✅ 已安裝並登入（`fly auth whoami` = kevin861005@gmail.com） | — |
+| Fly app／secrets／deploy | ⏸️ 未做——延後 | — |
+
+**`ES256` 這一顆是今天最重要的發現**：Boot 的預設只認 RS256，若沒有 `fly.toml` 那行
+`JWS_ALGORITHMS=RS256,ES256`，**每一顆真 token 都會 401**。先前標為「範圍外待追認」的那一項，
+現在有硬證據證明它是必要設定，不是保險。
+
+## 剩餘 checkbox 的現況
+
+- [x] 容器（做完、本機驗過）
+- [ ] Fly app 建在 `nrt` ⏸️ 延後
+- [ ] secrets ⏸️ 延後（值已全部備齊，指令見 README，只差密碼由使用者貼上）
+- [x] ~~查證並記錄：Fly → Supabase session pooler 連得上（IPv4）；連線池個位數~~
+      **改以本機探針證實**（見上表三列）；「從 Fly 連得到」這半段隨部署一起延後。
+      連線池 `maximum-pool-size=5` 已設。
+- [ ] 真 token 打 Fly 拿 200 空列表 ⏸️ 延後（真 token 本身已拿到並驗過形狀）
+- [ ] 首位元組延遲實測 ⏸️ 延後（沒機器可測）
+- [x] 部署步驟寫成可重跑的說明（`api/README.md`，已填入今天查證到的實際值）
+- [ ] OpenAPI `servers` placeholder ⏸️ 延後——網址 `https://hapeetrail.fly.dev` 與定案的 app 名稱
+      一致，但**沒真的部署前那段「⚠️ 目前是 placeholder」的警語不能拿掉**，拿掉就是對夥伴說謊。

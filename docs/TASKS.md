@@ -12,6 +12,11 @@
   契約 v4（openapi／notes.md／postman 三份同步）、Testcontainers 測試（搬 `notes.test.sql` 情境清單）、
   Fly.io `nrt` 部署、hosted-smoke 改打 Spring、兩個獨立複核、一刀切 drop RPC；**CLAUDE.md 架構原則同步改**
   **第一批 ticket 順序**：CLAUDE.md 改原則 → v4 openapi 先出交夥伴（contract-first，他尚未開工）→ 才動 Java
+  進度（施工順序表：`.scratch/java-rewrite/README.md`）：步 0–4 ✅ 完成（`cabc523`）；
+  **步 5（票 10）部分完成 `7c54f9d`**——容器／fly.toml／部署 runbook 做完並本機驗過，
+  **上真機那半段刻意延後到步 11 前**（Fly 無免費方案 ≈US$5.7/月，iOS 夥伴尚未開工，
+  票 10 要證的三件事已從本機證掉兩件）。下一張：步 6 = 票 05 留便條。
+  ⏸️ 等什麼：與 iOS 夥伴約定的開工日——那之前幾天再把 Fly 部署補完。
 - [ ] **T20** 產品正名 Trailstamp → HapeeTrail：CLAUDE.md、openapi 標題、`supabase/config.toml` project_id、
   ADR／HANDOFF 標題、`docs/index.html`（`CONTEXT.md` 已定案）
 - [ ] **T3** UGC 檢舉機制（App Store 審查前必須；T19 之後在 Java 實作，不再寫 `report_note` RPC）
