@@ -1,0 +1,39 @@
+# HapeeTrail 服務的 Fly.io 設定。機密（DB URL／密碼、JWKS 位址）不在這裡，
+# 一律 `fly secrets set`；這支只放可以公開的設定。
+app = "hapeetrail"
+primary_region = "nrt"   # 東京，與 Supabase 專案同區
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Supabase 非對稱簽章金鑰預設是 ES256，Boot 的預設只認 RS256。
+  # 兩個都列著，切哪一種都不會全站 401。
+  #
+  # 只能放這裡、不能放 application.properties：查過 Boot 4.1.1 的 JwtDecoderConfiguration，
+  # jwk-set-uri 那條路徑是 jwsAlgorithms(Consumer<Set>) 逐一 add，多個沒問題；
+  # public-key-location 那條（**測試在走的**）呼叫 exactlyOneAlgorithm()，列兩個直接啟動失敗。
+  SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWS_ALGORITHMS = "RS256,ES256"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # 常駐不縮零：JVM 冷啟動十幾秒，縮零之後第一個請求會整段吃下去。
+  # "off" 就是「永不停機」；auto_start 留 true 當安全網（機器若被手動停掉，下一個請求會把它叫回來）。
+  # ponytail: 沒有 min_machines_running——Fly 的文件寫明它只在 auto_stop 為 "stop"／"suspend" 時才生效，
+  # 這裡設了是死設定。機器數靠首次 `fly deploy --ha=false` 決定（見 README）。
+  auto_stop_machines = "off"
+  auto_start_machines = true
+
+  [[http_service.checks]]
+    path = "/actuator/health"
+    interval = "15s"
+    # JVM ＋ Hikari 首次連 pooler，30 秒內要起得來。
+    grace_period = "30s"
+    # DB 掛掉時 health 會卡在 Hikari 的 connectionTimeout（預設 30s）才回，
+    # 這個 timeout 就是把它判成 unhealthy 的那把尺。
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
