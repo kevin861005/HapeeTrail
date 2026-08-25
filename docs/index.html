@@ -16,12 +16,15 @@
 </head>
 <body>
 <div class="banner">
-  <b>Trailstamp 第一階段便條 API</b> —— 契約的權威來源是本 repo 的
+  <b>Trailstamp 第一階段便條 API — 契約 v4</b> —— 契約的權威來源是本 repo 的
   <code>docs/api/openapi.yaml</code>，本頁只是它的呈現。
   語意規則與完整 curl 範例見 <a href="https://github.com/kevin861005/HapeeTrail/blob/main/docs/api/notes.md">notes.md</a>；
   <code>color</code>／<code>style</code> 對照表見
   <a href="https://github.com/kevin861005/HapeeTrail/blob/main/docs/api/style-codes.md">style-codes.md</a>（由 iOS 維護）。
-  要用「Try it out」請先在右上 Authorize 填入 publishable key。
+  <b>兩個 base URL</b>：業務端點打 HapeeTrail 服務（頂層 <code>servers</code>）、
+  <code>/auth/v1/signup</code> 打 Supabase（該 path 自己的 <code>servers</code>）。
+  要用「Try it out」請先在右上 Authorize 填入匿名登入拿到的 access_token（Bearer）——
+  <b>業務請求不再需要 apikey</b>。
 </div>
 <div id="swagger-ui"></div>
 <script src="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js" crossorigin></script>

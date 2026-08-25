@@ -1,47 +1,73 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "3.3.0"
+  version: "4.0.0"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/HapeeTrail
   description: |
-    第一階段便條 API。所有業務 endpoint 都是 Supabase PostgREST 的 RPC（POST /rest/v1/rpc/{fn}）。
+    第一階段便條 API。業務端點全部由 **HapeeTrail 服務**（Spring Boot，東京）提供，
+    路徑為資源導向的 REST。
 
-    **每個請求都必須帶兩個 header**：
-    - `apikey`: 專案 publishable key（本地開發值見 `supabase status`）
-    - `Authorization: Bearer <access_token>`（來自匿名登入；`/auth/v1/signup` 本身只需 apikey）
+    **兩個 base URL，別混**：
+    - 業務 API → 本檔頂層的 `servers`（HapeeTrail 服務）。
+    - `/auth/v1/*`（匿名登入、刷新、日後的帳號綁定）→ **Supabase GoTrue**，
+      見 `/auth/v1/signup` 這個 path 自己的 `servers`。服務不代理任何 auth 路徑。
 
-    **錯誤契約**：業務錯誤一律 HTTP 400 ＋ `{"code":"P0001","message":"<token>"}`，
-    token 見各 endpoint 與 ApiError schema（字串已凍結，改名＝breaking change）。
-    401 / `PGRST3xx` / `42501` 等非 P0001 錯誤＝session 問題，走刷新流程。
+    **業務請求只帶一個 header**：`Authorization: Bearer <access_token>`（來自匿名登入）。
+    apikey 只有 Supabase 的 auth 路徑需要，不再是業務 API 的一部分。
 
-    Postman：直接 import 本檔即可產生 collection。
+    **錯誤契約**：RFC 9457 problem+json（`Content-Type: application/problem+json`）。
+    業務錯誤帶 `code`（凍結 token，enum 見 `Problem` schema）＋有語意的 HTTP 狀態碼
+    （400／401／403／404／409／422／429）；**型別／格式錯誤是 400 且沒有 `code`**。
+    判斷規則因此只有一條：**有 `code` 才是業務錯誤**——`401` 一律代表 session 問題、
+    走刷新流程，不必對 body 做任何比對。
+
+    Postman：直接 import 本檔即可產生 collection；可執行的完整流程見 `postman/`。
+
 servers:
-  - url: https://iwkuywlrggxolyoiyrui.supabase.co
+  - url: https://hapeetrail.fly.dev
     description: >-
-      測試環境（Supabase hosted，東京 ap-northeast-1）——**夥伴請用這個**。
-      一直在線、真機用行動網路也連得到，不依賴任何人的電腦開著。
-  - url: http://127.0.0.1:54321
-    description: 本地開發（`supabase start`；只有跑起它的那台機器連得到）
+      測試環境（HapeeTrail 服務，Fly.io 東京 `nrt`）——**夥伴請用這個**。
+      ⚠️ 網址目前是 placeholder：首次部署（T19 步 5）確定實際 app 名稱後本檔會更新，
+      屆時只有這一行會變，契約本身不動。
+  - url: http://127.0.0.1:8080
+    description: 本地開發（`mvn spring-boot:run`；只有跑起它的那台機器連得到）
+
 tags:
   - name: auth
-    description: 匿名 session（Supabase GoTrue）
+    description: 匿名 session（Supabase GoTrue，**不是** HapeeTrail 服務）
   - name: notes
     description: 便條核心循環（留下／發現／撿起／我的列表）
+  - name: ops
+    description: 營運端點（健康檢查；不需認證）
 
 paths:
   /auth/v1/signup:
+    servers:
+      - url: https://iwkuywlrggxolyoiyrui.supabase.co
+        description: Supabase 專案（GoTrue，東京 ap-northeast-1）——auth 路徑打這裡，不打 HapeeTrail 服務
     post:
       tags: [auth]
       operationId: signInAnonymously
-      summary: 匿名登入（取得 session）
+      summary: 匿名登入（取得 session）— 打 Supabase，不打 HapeeTrail 服務
       description: |
         body 給空物件 `{}` 即為匿名註冊（等同各語言 SDK 的 `signInAnonymously`）。
-        回傳的 `access_token` 用於後續所有請求的 Bearer。
+        回傳的 `access_token` 用於後續所有 HapeeTrail 業務請求的 Bearer。
         ⚠️ 只在沒有既存 session 時呼叫——重複呼叫會鑄新 user id，孤兒化舊資料。
-      security:
-        - ApiKey: []
+
+        本 path 是**唯一**需要帶 `apikey` header 的請求，且它是 Supabase 的要求、
+        不屬於 HapeeTrail 契約；業務端點一律只帶 Bearer。
+      security: []
+      parameters:
+        - name: apikey
+          in: header
+          required: true
+          schema:
+            type: string
+          description: >-
+            Supabase publishable（anon）key。**Supabase 端的要求，不是本契約的一部分**——
+            HapeeTrail 的業務端點不接受也不需要它。
       requestBody:
         required: true
         content:
@@ -57,30 +83,28 @@ paths:
               schema:
                 $ref: "#/components/schemas/Session"
         "422":
-          description: GoTrue 錯誤（如匿名登入未啟用）——非本契約的業務錯誤範圍
+          description: GoTrue 錯誤（如匿名登入未啟用）——GoTrue 的錯誤格式，非本契約的 problem+json
 
-  /rest/v1/rpc/drop_note:
+  /v1/notes:
     post:
       tags: [notes]
       operationId: dropNote
       summary: 依當前位置留便條
       description: |
-        回傳建立的 Note（content 為 trim 後的正規版本，client 應以回傳值取代本地草稿）。
-        ⚠️ 不冪等：timeout 後勿盲目重試，先以 my_notes 確認是否已建立。
-        `p_color`／`p_style` 可省略，省略時由伺服器補預設（皆為 `1`）。
-        `p_audience` 可省略，省略時為 `anyone`（給任何人撿）。
-        錯誤 token：`not_authenticated` `invalid_coordinates` `content_empty`
-        `content_too_long` `invalid_style_code` `invalid_audience` `active_note_limit`
-        `private_note_limit`
+        回傳建立的 Note（`content` 為 trim 後的正規版本，client 應以回傳值取代本地草稿）。
+        成功為 **200**（而非 201）：契約沒有單張便條的 GET 路徑，因此沒有 `Location` 可指。
+        ⚠️ 不冪等：timeout 後勿盲目重試，先以 `GET /v1/me/notes` 確認是否已建立。
+        `color`／`style` 可省略，省略時由伺服器補預設（皆為 `1`）。
+        `audience` 可省略，省略時為 `anyone`（給任何人撿）。
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [p_content, p_lat, p_lng]
+              required: [content, coordinate]
               properties:
-                p_content:
+                content:
                   type: string
                   minLength: 1
                   maxLength: 500
@@ -88,23 +112,22 @@ paths:
                     1–500 個 Unicode code point。伺服器**先 trim 再計數**，只剝字串頭尾
                     （多行內容中間的縮排不受影響），trim 後為空 → `content_empty`。
                     回傳的 `content` 是 trim 後的版本，可能與送出的不同。
-                    字元集＝Unicode White_Space ＋ U+001C–U+001F（後者是 Postgres 字元類別
-                    多涵蓋的，實務上打不出來但與標準 whitespace 集有差異）。
+                    字元集＝Unicode White_Space ＋ U+001C–U+001F（後者是多涵蓋的
+                    C0 資訊分隔符，實務上打不出來但與標準 whitespace 集有差異）。
                     格式字元（U+200B–200D、U+2060、U+FEFF、U+180E）不算空白，
                     不會被剝也不會被判為空。詳見 notes.md §4。
-                p_lat:
-                  $ref: "#/components/schemas/Latitude"
-                p_lng:
-                  $ref: "#/components/schemas/Longitude"
-                p_color:
+                coordinate:
+                  allOf: [{ $ref: "#/components/schemas/Coordinate" }]
+                  description: 投放位置
+                color:
                   allOf: [{ $ref: "#/components/schemas/StyleCode" }]
                   default: 1
                   description: 色票代號；省略或給 null ＝ 伺服器預設 1
-                p_style:
+                style:
                   allOf: [{ $ref: "#/components/schemas/StyleCode" }]
                   default: 1
                   description: 卡片樣式代號；省略或給 null ＝ 伺服器預設 1
-                p_audience:
+                audience:
                   allOf: [{ $ref: "#/components/schemas/Audience" }]
                   default: anyone
                   description: |
@@ -112,12 +135,13 @@ paths:
                     不認得的值 → `invalid_audience`（不會靜默走預設——那會把
                     使用者以為私密的便條變成公開的）。
             example:
-              p_content: 神社後面的拉麵店超好吃
-              p_lat: 35.6595
-              p_lng: 139.7005
-              p_color: 1
-              p_style: 1
-              p_audience: anyone
+              content: 神社後面的拉麵店超好吃
+              coordinate:
+                latitude: 35.6595
+                longitude: 139.7005
+              color: 1
+              style: 1
+              audience: anyone
       responses:
         "200":
           description: 建立的便條
@@ -126,37 +150,76 @@ paths:
               schema:
                 $ref: "#/components/schemas/Note"
         "400":
-          $ref: "#/components/responses/BusinessError"
+          description: |
+            `invalid_coordinates`｜`content_empty`｜`content_too_long`
+            （`details.maxChars`）｜`invalid_style_code`｜`invalid_audience`。
+            另含**沒有 `code`** 的型別／格式錯誤（非法 JSON、欄位型別不對、缺必填）。
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                businessError:
+                  summary: 業務錯誤（有 code）
+                  value:
+                    type: about:blank
+                    title: content_too_long
+                    status: 400
+                    code: content_too_long
+                    details: { maxChars: 500 }
+                malformed:
+                  summary: 型別／格式錯誤（**沒有 code**）
+                  value:
+                    type: about:blank
+                    title: Bad Request
+                    status: 400
         "401":
-          $ref: "#/components/responses/AuthError"
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          description: |
+            `active_note_limit`（`details.maxActiveNotes` ＝ 50 張未撿的公開便條）｜
+            `private_note_limit`（`details.maxPrivateNotes` ＝ 5000 張旅遊紀錄）。
+            請求本身合法，是狀態不允許——因此是 422 而不是 400。
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: about:blank
+                title: active_note_limit
+                status: 422
+                code: active_note_limit
+                details: { maxActiveNotes: 50 }
 
-  /rest/v1/rpc/nearby_notes:
+  /v1/notes/nearby:
     post:
       tags: [notes]
       operationId: nearbyNotes
       summary: 100m 內便條提示（探索輪詢）
       description: |
-        回傳 100m 內、非自己投放、未被撿走、且 `audience` 為 `anyone` 的便條 pin，
+        回傳 100m 內、非自己投放、未被撿走、未過期、且 `audience` 為 `anyone` 的便條 pin，
         最近優先、最多 20 筆（截斷不另行標示）。
         刻意不含 content 與作者——內容是走進 50m 撿起的獎勵。
         旅遊紀錄（`audience: self`）不會出現在任何人的探索結果中，包含作者自己。
         `pickable` 為呼叫當下快照，伺服器於撿起時重新驗證；client 勿硬編 50/100m。
-        錯誤 token：`not_authenticated` `invalid_coordinates`
+
+        **座標刻意放在 body 而不是 query**：query 會把座標寫進存取日誌與各層 proxy 的
+        快取，因此探索是 POST（見 notes.md §10）。
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [p_lat, p_lng]
+              required: [coordinate]
               properties:
-                p_lat:
-                  $ref: "#/components/schemas/Latitude"
-                p_lng:
-                  $ref: "#/components/schemas/Longitude"
+                coordinate:
+                  allOf: [{ $ref: "#/components/schemas/Coordinate" }]
+                  description: 探索中心（呼叫者的當前位置）
             example:
-              p_lat: 35.65977
-              p_lng: 139.7005
+              coordinate:
+                latitude: 35.65977
+                longitude: 139.7005
       responses:
         "200":
           description: 附近便條提示（envelope；items 可能為空陣列）
@@ -165,37 +228,50 @@ paths:
               schema:
                 $ref: "#/components/schemas/NearbyResult"
         "400":
-          $ref: "#/components/responses/BusinessError"
+          description: |
+            `invalid_coordinates`。另含**沒有 `code`** 的型別／格式錯誤。
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "401":
-          $ref: "#/components/responses/AuthError"
+          $ref: "#/components/responses/Unauthorized"
 
-  /rest/v1/rpc/pickup_note:
+  /v1/notes/{id}/pickup:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: 要撿起的便條 id（來自探索結果的 `items[].id`）
     post:
       tags: [notes]
       operationId: pickupNote
       summary: 50m 內獨佔撿起
       description: |
-        獨佔語意：全世界只有一人撿得到同一張，先到先贏；輸家收到 `note_taken`。
-        冪等重試：撿起成功但回應遺失時，同一人重試回傳成功（不誤報 note_taken）。
-        別人的旅遊紀錄（`audience: self`）撿不走，且回 `note_not_found`——
-        與不存在的便條同一個答案，刻意不區分。
-        錯誤 token：`not_authenticated` `invalid_coordinates` `note_not_found`
-        `note_taken` `own_note` `too_far` `pickup_rate_limited`
+        獨佔語意：全世界只有一人撿得到同一張，先到先贏；輸家收到 `note_taken`（409）。
+        冪等重試：撿起成功但回應遺失時，同一人重試回傳 200 成功（不誤報 `note_taken`），
+        且 `pickedUpAt` 為**原本那次**的時間，不會被改寫。
+        別人的旅遊紀錄、已過期的便條、不存在的 id，三者一律 `note_not_found`（404）
+        ——刻意不區分（見 notes.md §3）。
+        撿得太頻繁 → 429 ＋ 標準的 `Retry-After` header。
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [p_note_id, p_lat, p_lng]
+              required: [coordinate]
               properties:
-                p_note_id:
-                  type: string
-                  format: uuid
-                p_lat:
-                  $ref: "#/components/schemas/Latitude"
-                p_lng:
-                  $ref: "#/components/schemas/Longitude"
+                coordinate:
+                  allOf: [{ $ref: "#/components/schemas/Coordinate" }]
+                  description: 呼叫者的當前位置（伺服器據此重算距離）
+            example:
+              coordinate:
+                latitude: 35.65977
+                longitude: 139.7005
       responses:
         "200":
           description: 撿到的完整便條（content 在此揭露）
@@ -204,39 +280,94 @@ paths:
               schema:
                 $ref: "#/components/schemas/Note"
         "400":
-          $ref: "#/components/responses/BusinessError"
+          description: |
+            `invalid_coordinates`。另含**沒有 `code`** 的型別／格式錯誤
+            （含 path 上的 `id` 不是合法 uuid）。
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "401":
-          $ref: "#/components/responses/AuthError"
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            `own_note`（撿自己的便條）｜`too_far`（`details.distanceM` ＝ 伺服器當下算出的
+            實際距離，與 NearbyHint 的 `distanceM` 同一算法）。
+            身分沒問題、便條也在，是這次動作不被允許——因此是 403 而不是 400。
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: about:blank
+                title: too_far
+                status: 403
+                code: too_far
+                details: { distanceM: 87 }
+        "404":
+          description: |
+            `note_not_found`。**三種情況同一個答案**：便條不存在、是別人的旅遊紀錄、
+            已過期。刻意不區分——區分等於向外人確認該座標有一張他看不到的便條。
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: about:blank
+                title: note_not_found
+                status: 404
+                code: note_not_found
+        "409":
+          description: |
+            `note_taken`——有人搶先一步。移除 pin、重新探索。
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: about:blank
+                title: note_taken
+                status: 409
+                code: note_taken
+        "429":
+          description: |
+            `pickup_rate_limited`——滾動一小時內 60 次的上限。
+            `details.retryAfterS` 與 `Retry-After` header 同值，都是伺服器**算出來的**
+            （第 60 近那次撿取離開窗口的秒數），不是固定常數。
+          headers:
+            Retry-After:
+              description: 建議等待的秒數（RFC 9110 的標準 header；值同 `details.retryAfterS`）
+              schema:
+                type: integer
+                minimum: 0
+              example: 1800
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: about:blank
+                title: pickup_rate_limited
+                status: 429
+                code: pickup_rate_limited
+                details: { retryAfterS: 1800 }
 
-  /rest/v1/rpc/my_notes:
-    post:
+  /v1/me/notes:
+    get:
       tags: [notes]
       operationId: myNotes
       summary: 我投放的便條（cursor 分頁）
       description: |
-        自己投放的便條（含已被撿走的；`pickedUpAt != null` ⇒ 被撿走），
+        自己投放的便條（含已被撿走的與已過期的；`pickedUpAt != null` ⇒ 被撿走），
         `createdAt` 新→舊。公開便條與旅遊紀錄都在這裡，以 `audience` 分辨。
-        **cursor 分頁**：第一頁不帶 `p_cursor`；
-        下一頁把上一頁的 `nextCursor` **原樣**放進 `p_cursor`。
+        **cursor 分頁**：第一頁不帶 `cursor`；
+        下一頁把上一頁的 `nextCursor` **原樣**放進 `cursor` query 參數。
         `nextCursor` 為 null ＝ 沒有更多——不必再多打一次確認。
         游標無法解碼、被竄改、或不屬於本 endpoint 的排序 → `invalid_cursor`
         （一律大聲失敗，不會靜默退化成第一頁或回錯資料）。
-        錯誤 token：`not_authenticated` `invalid_cursor`
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ListParams"
-            examples:
-              firstPage:
-                summary: 第一頁
-                value: { p_limit: 50 }
-              nextPage:
-                summary: 下一頁（游標＝上一頁的 nextCursor，原樣回傳）
-                value:
-                  p_limit: 50
-                  p_cursor: <上一頁回傳的 nextCursor，原樣貼回>
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/CursorParam"
       responses:
         "200":
           description: 便條列表 envelope（新→舊；nextCursor 為 null ＝ 沒有更多）
@@ -245,26 +376,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/NotePage"
         "400":
-          $ref: "#/components/responses/BusinessError"
+          $ref: "#/components/responses/ListBadRequest"
         "401":
-          $ref: "#/components/responses/AuthError"
+          $ref: "#/components/responses/Unauthorized"
 
-  /rest/v1/rpc/my_collection:
-    post:
+  /v1/me/collection:
+    get:
       tags: [notes]
       operationId: myCollection
       summary: 我撿到的便條（cursor 分頁）
       description: |
-        自己撿到的便條，`pickedUpAt` 新→舊。分頁規則與參數同 my_notes。
-        游標編碼了所屬列表的排序，拿錯（my_notes 的游標給本 endpoint）→ `invalid_cursor`。
+        自己撿到的便條，`pickedUpAt` 新→舊。分頁規則與參數同 `/v1/me/notes`。
+        游標編碼了所屬列表的排序，拿錯（`/v1/me/notes` 的游標給本 endpoint）→ `invalid_cursor`。
         `coordinate` 是投放位置（第一階段不記錄撿起位置）；無作者資訊，顯示為匿名旅人。
-        錯誤 token：`not_authenticated` `invalid_cursor`
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ListParams"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/CursorParam"
       responses:
         "200":
           description: 收藏列表 envelope（撿起時間新→舊；nextCursor 為 null ＝ 沒有更多）
@@ -273,37 +400,104 @@ paths:
               schema:
                 $ref: "#/components/schemas/NotePage"
         "400":
-          $ref: "#/components/responses/BusinessError"
+          $ref: "#/components/responses/ListBadRequest"
         "401":
-          $ref: "#/components/responses/AuthError"
+          $ref: "#/components/responses/Unauthorized"
+
+  /actuator/health:
+    get:
+      tags: [ops]
+      operationId: health
+      summary: 健康檢查（不需認證）
+      description: |
+        給部署平台判斷服務活著用。**不帶任何認證**，也不揭露任何業務資料。
+        client 不需要呼叫它——列在契約裡是為了讓「哪些路徑存在」是完整的。
+      security: []
+      responses:
+        "200":
+          description: 服務正常
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP
+                additionalProperties: true
+              example: { status: UP }
+        "503":
+          description: 服務不健康（相依元件不可用）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: DOWN
+                additionalProperties: true
 
 components:
   securitySchemes:
-    ApiKey:
-      type: apiKey
-      in: header
-      name: apikey
-      description: Supabase publishable key（所有請求必帶）
     Bearer:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: 匿名登入取得的 access_token
+      description: >-
+        匿名登入取得的 access_token（Supabase GoTrue 簽發）。
+        業務請求**只需要這一個 header**；服務只驗它，不代理任何 auth 路徑。
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+      description: |
+        每頁筆數。**越界不報錯，伺服器靜默夾到 1–100**（`0`／負數 → 1，`101` 以上 → 100）；
+        此處的 min/max 是給 client 端預檢用的，不是伺服器的拒絕條件。
+        非整數（如 `limit=abc`）屬型別錯誤 → 400 且**沒有 `code`**。
+    CursorParam:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/Cursor"
+      description: 上一頁回傳的 nextCursor，原樣放進來即為下一頁；省略 ＝ 第一頁
 
   responses:
-    BusinessError:
-      description: 業務錯誤（code 恆為 P0001，message 為凍結 token）
+    Unauthorized:
+      description: |
+        `not_authenticated`——token 缺失、過期、簽章不符、缺 `sub`、`aud` 不符，
+        五種變形同一個答案。**401 一律代表 session 問題**：走刷新流程，
+        不需要（也不應該）比對 body。
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: "#/components/schemas/ApiError"
+            $ref: "#/components/schemas/Problem"
           example:
-            code: P0001
-            message: too_far
-            details: '{"distanceM": 87}'
-            hint: null
-    AuthError:
-      description: session 缺失/過期（非業務錯誤；client 走 session 刷新流程）
+            type: about:blank
+            title: not_authenticated
+            status: 401
+            code: not_authenticated
+    ListBadRequest:
+      description: |
+        `invalid_cursor`——無法解碼、被竄改、或不屬於本 endpoint 的排序。
+        另含**沒有 `code`** 的型別／格式錯誤（如 `limit` 不是整數）。
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: about:blank
+            title: invalid_cursor
+            status: 400
+            code: invalid_cursor
 
   schemas:
     Latitude:
@@ -352,7 +546,9 @@ components:
           另有自己的絕對上限 5000 張（`private_note_limit`），與公開便條的額度互不影響。
     Coordinate:
       type: object
-      description: WGS-84 座標（回應端一律巢狀物件；請求端維持兩個扁平參數）
+      description: >-
+        WGS-84 座標。**請求端與回應端是同一個型別**（v4 起請求端也是巢狀物件，
+        client 兩邊可以共用同一個資料型別）。
       required: [latitude, longitude]
       properties:
         latitude:
@@ -363,7 +559,7 @@ components:
     Note:
       type: object
       description: |
-        便條完整物件（drop_note / pickup_note / my_notes / my_collection 共用同一 shape）。
+        便條完整物件（留便條／撿起／我的便條／我的收藏共用同一 shape，恰好 9 鍵）。
         不含任何 uuid 身分欄位（author_id/picked_up_by 不上 wire）——作者一律顯示為匿名旅人。
         鍵名為 camelCase，縮寫視為普通單字（日後的 `photoUrl` 不會是 `photoURL`）。
       required: [id, content, color, style, audience, coordinate, createdAt, expiresAt, pickedUpAt]
@@ -382,8 +578,8 @@ components:
         audience:
           allOf: [{ $ref: "#/components/schemas/Audience" }]
           description: |
-            誰撿得到。在 my_notes 中用來分辨公開便條與旅遊紀錄；
-            my_collection 中恆為 `anyone`（旅遊紀錄撿不走）。
+            誰撿得到。在 `/v1/me/notes` 中用來分辨公開便條與旅遊紀錄；
+            `/v1/me/collection` 中恆為 `anyone`（旅遊紀錄撿不走）。
         coordinate:
           allOf: [{ $ref: "#/components/schemas/Coordinate" }]
           description: 投放位置（第一階段不記錄撿起位置）
@@ -450,25 +646,10 @@ components:
         不透明分頁游標。**client 唯一的義務是原樣回傳**——不要解碼、不要解析、不要自行組裝。
         內部結構不屬於契約，後端可能隨時改變（例如日後改以距離或熱門度排序）；屆時舊游標
         會被拒為 `invalid_cursor` 而非靜默退化，client 只需重新從第一頁開始。
-        游標也編碼了它屬於哪一支列表的排序，因此拿錯（my_notes 的游標給 my_collection）
-        同樣是 `invalid_cursor`，而不是靜默回錯資料——由伺服器把關，不是 client 的義務。
+        游標也編碼了它屬於哪一支列表的排序，因此拿錯（`/v1/me/notes` 的游標給
+        `/v1/me/collection`）同樣是 `invalid_cursor`，而不是靜默回錯資料——由伺服器把關，
+        不是 client 的義務。
       example: <上一頁回傳的 nextCursor，原樣貼回>
-
-    ListParams:
-      type: object
-      description: 列表分頁參數（my_notes 與 my_collection 共用；全部可省略＝第一頁、預設 50 筆）
-      properties:
-        p_limit:
-          type: integer
-          minimum: 1
-          maximum: 100
-          default: 50
-          description: |
-            每頁筆數。**越界不報錯，伺服器靜默夾到 1–100**（`0`／負數 → 1，`101` 以上 → 100）；
-            此處的 min/max 是給 client 端預檢用的，不是伺服器的拒絕條件。
-        p_cursor:
-          allOf: [{ $ref: "#/components/schemas/Cursor" }]
-          description: 上一頁回傳的 nextCursor，原樣放進來即為下一頁；省略或 null ＝ 第一頁
 
     NotePage:
       type: object
@@ -513,17 +694,41 @@ components:
           additionalProperties: true
       additionalProperties: true
 
-    ApiError:
+    Problem:
       type: object
-      description: PostgREST 業務錯誤（iOS 以 code == "P0001" 為閘、switch message）
-      required: [code, message]
+      description: |
+        RFC 9457 problem+json（`Content-Type: application/problem+json`）。
+        **`code` 是唯一的判斷依據**：有 `code` ⇒ 業務錯誤，依 token 決定行為；
+        沒有 `code`（型別／格式錯誤、平台層錯誤）⇒ 通用錯誤路徑。
+        HTTP 狀態碼提供第一層分流（401 走 session 刷新、429 走重試…），
+        業務層再 switch `code`。
+      required: [type, title, status]
       properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+          example: about:blank
+          description: >-
+            問題型別。本契約目前恆為 `about:blank`（型別由 `code` 表達）。
+            日後若改為具體 URI，是非破壞性變更——client 不得依賴它。
+        title:
+          type: string
+          example: too_far
+          description: >-
+            人類可讀的摘要。業務錯誤時等於 `code`，其餘為通用描述。
+            **給人看的，不是判斷依據**——不得對它做字串比對。
+        status:
+          type: integer
+          example: 403
+          description: HTTP 狀態碼，與 response 的狀態碼相同（RFC 9457 的慣例）。
         code:
           type: string
-          example: P0001
-        message:
-          type: string
-          description: 凍結的機器碼
+          description: |
+            凍結的機器碼。**只有業務錯誤才有這個鍵**；型別／格式錯誤的 400
+            沒有它（v3 的「第二層閘門」在 v4 就是「有沒有 `code`」）。
+            token 字串永久凍結：新增為非破壞性變更（依未知值政策走 default 分支），
+            改名或刪除為破壞性變更。
           enum:
             - not_authenticated
             - invalid_coordinates
@@ -540,25 +745,25 @@ components:
             - too_far
             - pickup_rate_limited
         details:
-          type: string
+          type: object
           nullable: true
-          example: '{"distanceM": 87}'
+          additionalProperties: true
+          example: { distanceM: 87 }
           description: |
-            選配的附帶資料。**它是一個內容為 JSON 的字串，不是巢狀物件**——PostgREST 將
-            資料庫例外的 DETAIL 原樣當字串傳遞。要用它必須做**第二次 JSON 解析**，且
-            **必須把解析失敗視為「沒有附帶資料」而非錯誤**；欄位可能為 null，client 不得
-            依賴其存在（它讓文案更精確，不是流程的前提）。目前附帶資料的 token 與其解析後內容：
-            `too_far` → `{"distanceM": 87}`（伺服器當下算出的實際距離，公尺；與 NearbyHint 的
-            `distanceM` 同一算法）；`content_too_long` → `{"maxChars": 500}`（Unicode code point）；
+            選配的附帶資料，**v4 起是真的 JSON 物件**（v3 是內容為 JSON 的字串，
+            需二次解析——那個規則消失了）。沒有附帶資料時**這個鍵省略**；
+            client 不得依賴其存在，也不得區分「沒有這個鍵」與「值為 null」
+            （它讓文案更精確，不是流程的前提）。
+            目前附帶資料的 token 與內容：
+            `too_far` → `{"distanceM": 87}`（伺服器當下算出的實際距離，公尺；與
+            NearbyHint 的 `distanceM` 同一算法）；
+            `content_too_long` → `{"maxChars": 500}`（Unicode code point）；
             `active_note_limit` → `{"maxActiveNotes": 50}`（未撿**公開**便條的數量上限）；
             `private_note_limit` → `{"maxPrivateNotes": 5000}`（旅遊紀錄的絕對總量上限）；
-            `pickup_rate_limited` → `{"retryAfterS": 1800}`（建議重試的秒數）。
-            其餘 token 的 `details` 為 null。新增鍵、或讓更多 token 附帶 `details`，
+            `pickup_rate_limited` → `{"retryAfterS": 1800}`（伺服器算出的建議重試秒數，
+            與 `Retry-After` header 同值）。
+            其餘 token 沒有 `details`。新增鍵、或讓更多 token 附帶 `details`，
             皆為非破壞性變更。
-        hint:
-          type: string
-          nullable: true
 
 security:
-  - ApiKey: []
-    Bearer: []
+  - Bearer: []

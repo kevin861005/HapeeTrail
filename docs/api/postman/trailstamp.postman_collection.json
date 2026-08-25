@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Trailstamp Notes API",
-    "description": "第一階段便條 API。搭配 local.postman_environment.json 使用。\n\n依資料夾順序執行即為完整流程：旅人 A 留便條（含只給自己看的旅遊紀錄）→ 旅人 B 發現並撿起 → 收藏。\nsignup 請求的 Tests script 會自動把 access_token 寫回 environment，不需手動貼 token。\n\n每輪由「匿名登入（A）」的 Pre-request script 隨機挑一個地點，所有座標都由它算出，因此可以反覆執行而不互相干擾——API 沒有刪除便條的路徑，固定座標會讓歷次殘留的便條累積在同一處，滿 20 張後就把本輪的目標便條擠出 nearby 的「最近 20 筆」。\n\n注意：apikey 只對本地 supabase（127.0.0.1）有效；夥伴機器用 `supabase status` 查自己的 key 後改 environment。\n\nwire format 權威：docs/api/openapi.yaml；語意規則：docs/api/notes.md。",
+    "description": "第一階段便條 API（契約 v4）。搭配 local.postman_environment.json 或 hosted.postman_environment.json 使用。\n\n依資料夾順序執行即為完整流程：旅人 A 留便條（含只給自己看的旅遊紀錄）→ 旅人 B 發現並撿起 → 收藏。\nsignup 請求的 Tests script 會自動把 access_token 寫回 environment，不需手動貼 token。\n\n**兩個 base URL**：業務端點打 {{base_url}}（HapeeTrail 服務）；匿名登入打 {{supabase_url}}（Supabase GoTrue），且只有它需要 apikey。\n\n**錯誤斷言看的是 RFC 9457 problem+json**：HTTP 狀態碼有語意（400/401/403/404/409/422/429），body 的 `code` 是唯一的判斷依據，`details` 是真的物件（v3 的「字串需二次解析」已消失）。\n\n每輪由「匿名登入（A）」的 Pre-request script 隨機挑一個地點，所有座標都由它算出，因此可以反覆執行而不互相干擾——API 沒有刪除便條的路徑，固定座標會讓歷次殘留的便條累積在同一處，滿 20 張後就把本輪的目標便條擠出 nearby 的「最近 20 筆」。\n\nwire format 權威：docs/api/openapi.yaml；語意規則：docs/api/notes.md。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -9,7 +9,7 @@
       "name": "0 旅人 A",
       "item": [
         {
-          "name": "匿名登入（A）",
+          "name": "匿名登入（A）— 打 Supabase",
           "event": [
             {
               "listen": "prerequest",
@@ -19,7 +19,7 @@
                   "// 沒有這段的話：每輪會留下一張沒人撿走的便條（「再留一張」那張），",
                   "// 累積滿 20 張後 nearby 的「最近 20 筆」就把本輪的目標便條擠出去，",
                   "// 斷言開始失敗——而且看起來會像後端 bug。",
-                  "// API 沒有刪除便條的路徑（DELETE /rest/v1/notes 是 403），所以只能靠換地點。",
+                  "// API 沒有刪除便條的路徑，所以只能靠換地點。",
                   "const lat = Math.random() * 120 - 60;   // 避開兩極，緯度帶 -60..60",
                   "const lng = Math.random() * 360 - 180;",
                   "pm.environment.set('base_lat', lat.toFixed(7));",
@@ -37,7 +37,7 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('200 + access_token', () => {",
+                  "pm.test('200 + access_token（auth 走 Supabase，不走 HapeeTrail 服務）', () => {",
                   "  pm.response.to.have.status(200);",
                   "  const j = pm.response.json();",
                   "  pm.expect(j.access_token).to.be.a('string');",
@@ -56,11 +56,11 @@
               { "key": "Content-Type", "value": "application/json" }
             ],
             "body": { "mode": "raw", "raw": "{}" },
-            "url": { "raw": "{{base_url}}/auth/v1/signup", "host": ["{{base_url}}"], "path": ["auth", "v1", "signup"] }
+            "url": { "raw": "{{supabase_url}}/auth/v1/signup", "host": ["{{supabase_url}}"], "path": ["auth", "v1", "signup"] }
           }
         },
         {
-          "name": "drop_note 留便條",
+          "name": "留便條 POST /v1/notes",
           "event": [
             {
               "listen": "test",
@@ -86,16 +86,15 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 測試便條 {{$randomInt}}\",\"p_lat\":{{base_lat}},\"p_lng\":{{base_lng}},\"p_color\":7,\"p_style\":3,\"p_audience\":\"anyone\"}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/drop_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "drop_note"] }
+            "body": { "mode": "raw", "raw": "{\"content\":\"postman 測試便條 {{$randomInt}}\",\"coordinate\":{\"latitude\":{{base_lat}},\"longitude\":{{base_lng}}},\"color\":7,\"style\":3,\"audience\":\"anyone\"}" },
+            "url": { "raw": "{{base_url}}/v1/notes", "host": ["{{base_url}}"], "path": ["v1", "notes"] }
           }
         },
         {
-          "name": "drop_note 再留一張（湊出第二頁）",
+          "name": "再留一張（湊出第二頁）",
           "event": [
             {
               "listen": "test",
@@ -113,16 +112,15 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 第二張 {{$randomInt}}\",\"p_lat\":{{note2_lat}},\"p_lng\":{{base_lng}}}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/drop_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "drop_note"] }
+            "body": { "mode": "raw", "raw": "{\"content\":\"postman 第二張 {{$randomInt}}\",\"coordinate\":{\"latitude\":{{note2_lat}},\"longitude\":{{base_lng}}}}" },
+            "url": { "raw": "{{base_url}}/v1/notes", "host": ["{{base_url}}"], "path": ["v1", "notes"] }
           }
         },
         {
-          "name": "my_notes 第一頁（envelope，每頁 1 筆）",
+          "name": "我的便條 第一頁 GET /v1/me/notes?limit=1",
           "event": [
             {
               "listen": "test",
@@ -143,18 +141,20 @@
             }
           ],
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
-              { "key": "Authorization", "value": "Bearer {{access_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_limit\":1}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/my_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_notes"] }
+            "url": {
+              "raw": "{{base_url}}/v1/me/notes?limit=1",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "me", "notes"],
+              "query": [{ "key": "limit", "value": "1" }]
+            }
           }
         },
         {
-          "name": "my_notes 第二頁（游標原樣回傳）",
+          "name": "我的便條 第二頁（游標原樣回傳）",
           "event": [
             {
               "listen": "test",
@@ -175,28 +175,33 @@
             }
           ],
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
-              { "key": "Authorization", "value": "Bearer {{access_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_limit\":1,\"p_cursor\":\"{{next_cursor}}\"}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/my_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_notes"] }
+            "url": {
+              "raw": "{{base_url}}/v1/me/notes?limit=1&cursor={{next_cursor}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "me", "notes"],
+              "query": [
+                { "key": "limit", "value": "1" },
+                { "key": "cursor", "value": "{{next_cursor}}" }
+              ]
+            }
           }
         },
         {
-          "name": "my_notes 錯誤示範：游標被竄改",
+          "name": "錯誤示範：游標被竄改 → 400 invalid_cursor",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('400 + invalid_cursor（不靜默退化成第一頁）', () => {",
+                  "pm.test('400 + code invalid_cursor（不靜默退化成第一頁）', () => {",
                   "  pm.response.to.have.status(400);",
                   "  const e = pm.response.json();",
-                  "  pm.expect(e.code).to.eql('P0001');",
-                  "  pm.expect(e.message).to.eql('invalid_cursor');",
+                  "  pm.expect(e.code, 'code 是唯一的判斷依據；有 code ⇒ 業務錯誤').to.eql('invalid_cursor');",
+                  "  pm.expect(e.status).to.eql(400);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -204,18 +209,23 @@
             }
           ],
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
-              { "key": "Authorization", "value": "Bearer {{access_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_limit\":1,\"p_cursor\":\"not-a-cursor\"}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/my_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_notes"] }
+            "url": {
+              "raw": "{{base_url}}/v1/me/notes?limit=1&cursor=not-a-cursor",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "me", "notes"],
+              "query": [
+                { "key": "limit", "value": "1" },
+                { "key": "cursor", "value": "not-a-cursor" }
+              ]
+            }
           }
         },
         {
-          "name": "drop_note 旅遊紀錄（只給自己看）",
+          "name": "留旅遊紀錄（只給自己看）",
           "event": [
             {
               "listen": "test",
@@ -225,7 +235,7 @@
                   "  pm.response.to.have.status(200);",
                   "  const n = pm.response.json();",
                   "  pm.expect(n.audience).to.eql('self');",
-                  "  pm.expect(n.color, '省略 p_color/p_style ⇒ 伺服器補預設 1（指向對照表裡一個具體項目）').to.eql(1);",
+                  "  pm.expect(n.color, '省略 color/style ⇒ 伺服器補預設 1（指向對照表裡一個具體項目）').to.eql(1);",
                   "  pm.expect(n.style).to.eql(1);",
                   "  pm.expect(n.expiresAt, '旅遊紀錄不會過期 ⇒ expiresAt 為 null').to.be.null;",
                   "  pm.environment.set('private_note_id', n.id);",
@@ -238,26 +248,25 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_content\":\"postman 旅遊紀錄 {{$randomInt}}\",\"p_lat\":{{private_lat}},\"p_lng\":{{base_lng}},\"p_audience\":\"self\"}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/drop_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "drop_note"] }
+            "body": { "mode": "raw", "raw": "{\"content\":\"postman 旅遊紀錄 {{$randomInt}}\",\"coordinate\":{\"latitude\":{{private_lat}},\"longitude\":{{base_lng}}},\"audience\":\"self\"}" },
+            "url": { "raw": "{{base_url}}/v1/notes", "host": ["{{base_url}}"], "path": ["v1", "notes"] }
           }
         },
         {
-          "name": "drop_note 錯誤示範：不認得的 audience",
+          "name": "錯誤示範：不認得的 audience → 400 invalid_audience",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('400 + invalid_audience（不靜默走預設——那會把私密便條變公開）', () => {",
+                  "pm.test('400 + code invalid_audience（不靜默走預設——那會把私密便條變公開）', () => {",
                   "  pm.response.to.have.status(400);",
                   "  const e = pm.response.json();",
-                  "  pm.expect(e.code).to.eql('P0001');",
-                  "  pm.expect(e.message, 'message 是唯一的判斷依據；details 的有無兩邊都不得依賴').to.eql('invalid_audience');",
+                  "  pm.expect(e.code).to.eql('invalid_audience');",
+                  "  pm.expect(e.title, 'title 是給人看的摘要，不得拿來比對').to.be.a('string');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -267,12 +276,11 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_content\":\"不會被建立\",\"p_lat\":{{base_lat}},\"p_lng\":{{base_lng}},\"p_audience\":\"friends\"}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/drop_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "drop_note"] }
+            "body": { "mode": "raw", "raw": "{\"content\":\"不會被建立\",\"coordinate\":{\"latitude\":{{base_lat}},\"longitude\":{{base_lng}}},\"audience\":\"friends\"}" },
+            "url": { "raw": "{{base_url}}/v1/notes", "host": ["{{base_url}}"], "path": ["v1", "notes"] }
           }
         }
       ]
@@ -281,7 +289,7 @@
       "name": "1 旅人 B（發現並撿起）",
       "item": [
         {
-          "name": "匿名登入（B）",
+          "name": "匿名登入（B）— 打 Supabase",
           "event": [
             {
               "listen": "test",
@@ -305,11 +313,11 @@
               { "key": "Content-Type", "value": "application/json" }
             ],
             "body": { "mode": "raw", "raw": "{}" },
-            "url": { "raw": "{{base_url}}/auth/v1/signup", "host": ["{{base_url}}"], "path": ["auth", "v1", "signup"] }
+            "url": { "raw": "{{supabase_url}}/auth/v1/signup", "host": ["{{supabase_url}}"], "path": ["auth", "v1", "signup"] }
           }
         },
         {
-          "name": "nearby_notes 發現附近便條",
+          "name": "探索 POST /v1/notes/nearby",
           "event": [
             {
               "listen": "test",
@@ -335,26 +343,24 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_lat\":{{probe_lat}},\"p_lng\":{{base_lng}}}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/nearby_notes", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "nearby_notes"] }
+            "body": { "mode": "raw", "raw": "{\"coordinate\":{\"latitude\":{{probe_lat}},\"longitude\":{{base_lng}}}}" },
+            "url": { "raw": "{{base_url}}/v1/notes/nearby", "host": ["{{base_url}}"], "path": ["v1", "notes", "nearby"] }
           }
         },
         {
-          "name": "pickup_note 錯誤示範：別人的旅遊紀錄",
+          "name": "錯誤示範：撿別人的旅遊紀錄 → 404 note_not_found",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('400 + note_not_found（與不存在的便條同一個答案）', () => {",
-                  "  pm.response.to.have.status(400);",
+                  "pm.test('404 + code note_not_found（與不存在的便條同一個答案）', () => {",
+                  "  pm.response.to.have.status(404);",
                   "  const e = pm.response.json();",
-                  "  pm.expect(e.code).to.eql('P0001');",
-                  "  pm.expect(e.message, '刻意不另設「這是私人便條」的 token——那等於向外人確認該座標有一張他看不到的便條').to.eql('note_not_found');",
+                  "  pm.expect(e.code, '刻意不另設「這是私人便條」的 token——那等於向外人確認該座標有一張他看不到的便條').to.eql('note_not_found');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -364,28 +370,26 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{private_note_id}}\",\"p_lat\":{{probe_lat}},\"p_lng\":{{base_lng}}}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/pickup_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "pickup_note"] }
+            "body": { "mode": "raw", "raw": "{\"coordinate\":{\"latitude\":{{probe_lat}},\"longitude\":{{base_lng}}}}" },
+            "url": { "raw": "{{base_url}}/v1/notes/{{private_note_id}}/pickup", "host": ["{{base_url}}"], "path": ["v1", "notes", "{{private_note_id}}", "pickup"] }
           }
         },
         {
-          "name": "pickup_note 錯誤示範：距離不足（details 附真實距離）",
+          "name": "錯誤示範：距離不足 → 403 too_far（details 是真物件）",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('400 + too_far；details 是「內容為 JSON 的字串」而非巢狀物件', () => {",
-                  "  pm.response.to.have.status(400);",
+                  "pm.test('403 + too_far；details 是真的 JSON 物件，不需二次解析', () => {",
+                  "  pm.response.to.have.status(403);",
                   "  const e = pm.response.json();",
-                  "  pm.expect(e.code).to.eql('P0001');",
-                  "  pm.expect(e.message).to.eql('too_far');",
-                  "  pm.expect(e.details, 'PostgREST 把 DETAIL 原樣當字串傳遞 ⇒ client 需二次解析').to.be.a('string');",
-                  "  pm.expect(JSON.parse(e.details).distanceM, '伺服器當下算出的真實距離（此處約 130m）').to.be.within(120, 140);",
+                  "  pm.expect(e.code).to.eql('too_far');",
+                  "  pm.expect(e.details, 'v4 起 details 是物件（v3 是內容為 JSON 的字串）').to.be.an('object');",
+                  "  pm.expect(e.details.distanceM, '伺服器當下算出的真實距離（此處約 130m）').to.be.within(120, 140);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -395,16 +399,15 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":{{far_lat}},\"p_lng\":{{base_lng}}}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/pickup_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "pickup_note"] }
+            "body": { "mode": "raw", "raw": "{\"coordinate\":{\"latitude\":{{far_lat}},\"longitude\":{{base_lng}}}}" },
+            "url": { "raw": "{{base_url}}/v1/notes/{{note_id}}/pickup", "host": ["{{base_url}}"], "path": ["v1", "notes", "{{note_id}}", "pickup"] }
           }
         },
         {
-          "name": "pickup_note 撿起（50m 內）",
+          "name": "撿起 POST /v1/notes/{id}/pickup（50m 內）",
           "event": [
             {
               "listen": "test",
@@ -416,6 +419,7 @@
                   "  pm.expect(n.id).to.eql(pm.environment.get('note_id'));",
                   "  pm.expect(n.content).to.be.a('string');",
                   "  pm.expect(n.pickedUpAt).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$/);",
+                  "  pm.environment.set('picked_up_at', n.pickedUpAt);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -425,24 +429,25 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":{{probe_lat}},\"p_lng\":{{base_lng}}}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/pickup_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "pickup_note"] }
+            "body": { "mode": "raw", "raw": "{\"coordinate\":{\"latitude\":{{probe_lat}},\"longitude\":{{base_lng}}}}" },
+            "url": { "raw": "{{base_url}}/v1/notes/{{note_id}}/pickup", "host": ["{{base_url}}"], "path": ["v1", "notes", "{{note_id}}", "pickup"] }
           }
         },
         {
-          "name": "pickup_note 再撿一次（冪等重試示範）",
+          "name": "再撿一次（冪等重試示範）",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('200（同一人重試回成功，不是 note_taken）', () => {",
+                  "pm.test('200（同一人重試回成功，不是 409 note_taken）；pickedUpAt 不被改寫', () => {",
                   "  pm.response.to.have.status(200);",
-                  "  pm.expect(pm.response.json().id).to.eql(pm.environment.get('note_id'));",
+                  "  const n = pm.response.json();",
+                  "  pm.expect(n.id).to.eql(pm.environment.get('note_id'));",
+                  "  pm.expect(n.pickedUpAt, '冪等重試回傳原本那次的時間').to.eql(pm.environment.get('picked_up_at'));",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -452,16 +457,15 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
               { "key": "Authorization", "value": "Bearer {{access_token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\"p_note_id\":\"{{note_id}}\",\"p_lat\":{{probe_lat}},\"p_lng\":{{base_lng}}}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/pickup_note", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "pickup_note"] }
+            "body": { "mode": "raw", "raw": "{\"coordinate\":{\"latitude\":{{probe_lat}},\"longitude\":{{base_lng}}}}" },
+            "url": { "raw": "{{base_url}}/v1/notes/{{note_id}}/pickup", "host": ["{{base_url}}"], "path": ["v1", "notes", "{{note_id}}", "pickup"] }
           }
         },
         {
-          "name": "my_collection 我的收藏",
+          "name": "我的收藏 GET /v1/me/collection",
           "event": [
             {
               "listen": "test",
@@ -480,14 +484,33 @@
             }
           ],
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [
-              { "key": "apikey", "value": "{{apikey}}" },
-              { "key": "Authorization", "value": "Bearer {{access_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
             ],
-            "body": { "mode": "raw", "raw": "{}" },
-            "url": { "raw": "{{base_url}}/rest/v1/rpc/my_collection", "host": ["{{base_url}}"], "path": ["rest", "v1", "rpc", "my_collection"] }
+            "url": { "raw": "{{base_url}}/v1/me/collection", "host": ["{{base_url}}"], "path": ["v1", "me", "collection"] }
+          }
+        },
+        {
+          "name": "健康檢查 GET /actuator/health（不需認證）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + status UP（不帶任何認證）', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('UP');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/actuator/health", "host": ["{{base_url}}"], "path": ["actuator", "health"] }
           }
         }
       ]
