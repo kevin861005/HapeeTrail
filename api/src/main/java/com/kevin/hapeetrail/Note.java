@@ -44,6 +44,13 @@ record NearbyHint(UUID id, int color, int style, Coordinate coordinate, int dist
 		String createdAt) {
 }
 
+/**
+ * {@code POST /v1/notes/{id}/pickup} 的 body。便條 id 在路徑上，body 只有呼叫者的當前位置
+ * ——伺服器據此重算距離（探索回的 {@code pickable} 是快照，client 不得拿它當授權）。
+ */
+record PickupRequest(Coordinate coordinate) {
+}
+
 /** 探索 envelope：無分頁（上限 20 就是全部），但仍是物件而非裸陣列——日後加欄位才不是破壞性變更。 */
 record NearbyResult(List<NearbyHint> items) {
 }

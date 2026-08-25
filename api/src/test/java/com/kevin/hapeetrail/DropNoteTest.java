@@ -33,6 +33,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 /**
  * 票 05：{@code POST /v1/notes}。情境清單＝{@code supabase/tests/notes.test.sql} 的
@@ -94,8 +95,8 @@ class DropNoteTest extends SupabaseDbTest {
 		assertThat(note.get("color").asInt()).isEqualTo(1);
 		assertThat(note.get("style").asInt()).isEqualTo(1);
 		assertThat(note.get("audience").asString()).isEqualTo("anyone");
-		assertThat(note.get("coordinate").get("latitude").asDouble()).isEqualTo(me.lat());
-		assertThat(note.get("coordinate").get("longitude").asDouble()).isEqualTo(me.lng());
+		assertThat(note.get("coordinate").get("latitude").asDouble()).isCloseTo(me.lat(), within(1e-9));
+		assertThat(note.get("coordinate").get("longitude").asDouble()).isCloseTo(me.lng(), within(1e-9));
 		assertThat(note.get("pickedUpAt").isNull()).isTrue();
 
 		// 六位小數＋Z，且公開便條的 expiresAt 恰好是 createdAt ＋ 90 天。
@@ -129,15 +130,23 @@ class DropNoteTest extends SupabaseDbTest {
 		assertThat(note.get("expiresAt").isNull()).isTrue();
 	}
 
-	/** 座標存成 WGS-84 geography（產生欄位），且回傳座標等於送出座標。 */
+	/**
+	 * 座標存成 WGS-84 geography（產生欄位），且回傳座標等於送出座標。
+	 *
+	 * <p>刻意不用完全相等：Supabase 的映像設了 {@code extra_float_digits = 0}，float8 以
+	 * **文字**回傳時截到 15 位有效數字，而 pgjdbc 要同一句 SQL 在同一條池連線上跑滿
+	 * {@code prepareThreshold}（預設 5）次才轉二進位傳輸、精確往返——換句話說「相等」與否
+	 * 取決於這次請求落在哪條連線、是第幾次執行，是會隨測試順序翻面的假紅。
+	 * 1e-9 度約 0.1mm，遠在任何地理意義之下，但足以抓到「回錯了一個點」。
+	 */
 	@Test
 	void coordinatesAreStoredAsWgs84Geography() throws Exception {
 		Traveler me = traveler();
 
 		JsonNode note = created(drop(me, body(me, "座標往返")));
 
-		assertThat(note.get("coordinate").get("latitude").asDouble()).isEqualTo(me.lat());
-		assertThat(note.get("coordinate").get("longitude").asDouble()).isEqualTo(me.lng());
+		assertThat(note.get("coordinate").get("latitude").asDouble()).isCloseTo(me.lat(), within(1e-9));
+		assertThat(note.get("coordinate").get("longitude").asDouble()).isCloseTo(me.lng(), within(1e-9));
 		assertThat(admin()
 			.sql("select extensions.st_srid(location) = 4326"
 					+ " and extensions.st_x(location::extensions.geometry) = lng"

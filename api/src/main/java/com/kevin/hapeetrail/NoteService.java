@@ -10,11 +10,13 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 便條的全部業務規則。常數與判定順序與 v3.3 的 RPC 逐字相同（契約 v4 只換 transport）。
@@ -91,8 +93,10 @@ class NoteService {
 
 	private static final int MAX_LIMIT = 100;
 
-	/** 游標裡的列表識別。收藏列表（票 08）用另一個值，兩支的游標因此互不相容。 */
+	/** 游標裡的列表識別。兩支列表的排序鍵不同，值不同 ⇒ 游標互不相容（拿錯即 invalid_cursor）。 */
 	private static final String MY_NOTES = "my_notes";
+
+	private static final String MY_COLLECTION = "my_collection";
 
 	/**
 	 * keyset 分頁：以（{@code created_at}, {@code id}）為游標，不用 OFFSET。
@@ -100,15 +104,31 @@ class NoteService {
 	 * 平手鍵是 id：同刻的便條（同一批、同一個交易）只靠時間戳會整批重複或整批消失。
 	 */
 	private static final String PAGE = """
-			select %s from public.notes
-			 where author_id = :author %s
-			 order by created_at desc, id desc
+			select %1$s from public.notes
+			 where %2$s = :traveler %4$s
+			 order by %3$s desc, id desc
 			 limit :limit
 			""";
 
-	private static final String PAGE_FIRST = PAGE.formatted(WIRE_COLUMNS, "");
+	private static final String PAGE_FIRST = PAGE.formatted(WIRE_COLUMNS, "author_id", "created_at", "");
 
-	private static final String PAGE_AFTER = PAGE.formatted(WIRE_COLUMNS, "and (created_at, id) < (:key, :id)");
+	private static final String PAGE_AFTER = PAGE.formatted(WIRE_COLUMNS, "author_id", "created_at",
+			"and (created_at, id) < (:key, :id)");
+
+	/**
+	 * 收藏依**撿起**時間排序，不是投放時間——最舊的便條可能是今天才撿到的。
+	 *
+	 * <p>計畫形狀（10 萬列、其中 5 萬已撿，ANALYZE 後實測）：
+	 * {@code Index Scan using notes_picker_ix} ＋ {@code Incremental Sort}
+	 * （{@code Presorted Key: picked_up_at}）——索引是 {@code (picked_up_by, picked_up_at desc)}，
+	 * 沒有 id，所以**只有同刻那幾筆**要再排一次，不是整份列表。翻頁那句還會把
+	 * {@code picked_up_at <= :key} 推進 Index Cond。要消掉這次 sort 得把索引改成三欄，
+	 * 那是 schema 變更（票 06 已就 {@code notes_author_ix} 的同一個形狀請示過，未定案）。
+	 */
+	private static final String COLLECTION_FIRST = PAGE.formatted(WIRE_COLUMNS, "picked_up_by", "picked_up_at", "");
+
+	private static final String COLLECTION_AFTER = PAGE.formatted(WIRE_COLUMNS, "picked_up_by", "picked_up_at",
+			"and (picked_up_at, id) < (:key, :id)");
 
 	/** 探索半徑與撿取半徑，公尺。兩者都只出現在 SQL 語句裡——Java 永遠不比較距離。 */
 	private static final double EXPLORE_RADIUS_M = 100.0;
@@ -145,6 +165,50 @@ class NoteService {
 			 order by distance_m
 			 limit %5$d
 			""".formatted(CALLER_POINT, EXPLORE_RADIUS_M, PICKUP_RADIUS_M, TTL.toSeconds(), MAX_HINTS);
+
+	/**
+	 * 撿起。獨佔性的全部保證就是這一句：check 與 write 同語句同 row version，沒有競態窗口。
+	 * happy path 因此只有一次 round trip，診斷只在它影響 0 列時才跑。
+	 *
+	 * <p>五個條件各擋一種便條：已被撿走的、旅遊紀錄（探索看不到它，但 id 未必永不外流）、
+	 * 自己的、已過期的、太遠的。{@code picked_up_at} 用 {@code now()} 而不是 Java 的時刻
+	 * ——它要與 {@code created_at} 出自同一個時鐘，否則兩台機器的偏移會讓收藏的排序飄掉。
+	 *
+	 * <p>前兩個條件與 {@code notes_active_location_gix} 的 partial index 述詞
+	 * （{@code picked_up_at is null and audience = 'anyone'}）**逐字一致**，與探索同一個不變式：
+	 * 實測計畫走 {@code Index Scan using notes_active_location_gix}，id 與 TTL 落在 Filter。
+	 */
+	private static final String PICKUP = """
+			update public.notes n
+			   set picked_up_by = :traveler, picked_up_at = now()
+			 where n.id = :id
+			   and n.picked_up_at is null
+			   and n.audience = 'anyone'
+			   and n.author_id <> :traveler
+			   and n.created_at > now() - make_interval(secs => %2$d)
+			   and extensions.st_dwithin(n.location, %1$s, %3$s)
+			returning %4$s
+			""".formatted(CALLER_POINT, TTL.toSeconds(), PICKUP_RADIUS_M, WIRE_COLUMNS);
+
+	/**
+	 * 失敗診斷：一句 SQL 把「為什麼撿不到」的六種可能一次算完，Java 只負責照固定順序讀。
+	 * 沒有列 ＝ 不存在。距離也在這裡算——與探索的 {@code distanceM} 同一組 geography 運算，
+	 * 兩份算法遲早分歧，症狀是「探索說 60 公尺、走過去撿卻說還差 70 公尺」。
+	 *
+	 * <p>此讀取相對 UPDATE 仍有 race（READ COMMITTED 下每個語句各自取快照），但它只影響
+	 * 回報哪個錯誤碼，不影響獨佔的正確性——獨佔由上面那一句 UPDATE 獨力保證。
+	 */
+	private static final String DIAGNOSE = """
+			select %3$s,
+			       n.picked_up_by = :traveler                            as is_mine,
+			       n.picked_up_at is not null                            as is_taken,
+			       n.author_id = :traveler                               as is_own,
+			       n.audience <> 'anyone'                                as is_private,
+			       n.created_at <= now() - make_interval(secs => %2$d)   as is_expired,
+			       round(extensions.st_distance(n.location, %1$s))::int  as distance_m
+			  from public.notes n
+			 where n.id = :id
+			""".formatted(CALLER_POINT, TTL.toSeconds(), WIRE_COLUMNS);
 
 	private final JdbcClient jdbc;
 
@@ -201,16 +265,33 @@ class NoteService {
 	 * 我留過的便條，{@code createdAt} 新→舊、以 id 平手。過期的仍在（只是不再進探索），
 	 * 旅遊紀錄也在——這份紀錄的完整性是 user story 15 本身。
 	 */
-	NotePage myNotes(UUID author, Long limit, String rawCursor) {
+	NotePage myNotes(UUID author, Long limit, String cursor) {
+		return page(author, limit, cursor, MY_NOTES, PAGE_FIRST, PAGE_AFTER, Note::createdAt);
+	}
+
+	/**
+	 * 我撿到的便條，{@code pickedUpAt} 新→舊。{@code audience} 恆為 {@code anyone}
+	 * （旅遊紀錄撿不走），{@code coordinate} 是**投放**位置——第一階段不記錄撿起位置。
+	 */
+	NotePage myCollection(UUID picker, Long limit, String cursor) {
+		return page(picker, limit, cursor, MY_COLLECTION, COLLECTION_FIRST, COLLECTION_AFTER, Note::pickedUpAt);
+	}
+
+	/**
+	 * 兩支列表共用的 keyset 分頁：以（排序鍵, id）為游標，不用 OFFSET。
+	 * 差別只有三處——查誰的欄位、排序鍵、游標裡的列表識別，全部由呼叫端給。
+	 */
+	private NotePage page(UUID traveler, Long limit, String rawCursor, String list, String first, String after,
+			Function<Note, String> sortKey) {
 		// 越界不報錯，靜默夾住：拒絕的話 client 算錯一次頁碼就整個列表打不開，夾住最多是這頁少幾筆。
 		// 收 long 而不是 int：`limit=99999999999` 是越界（該夾成 100），不是型別錯誤——
 		// 用 Integer 接的話 Spring 在轉型階段就 400 了，契約的「越界不報錯」在那裡靜默破掉。
 		// ponytail: 天花板搬到 2^63，沒有搬走。真要無上限就自己收字串再 parse，
 		// 但那要連「abc → 400 無 code」一起自己實作，換來的只是更大的一個數字。
 		int size = Math.clamp((limit != null) ? limit : DEFAULT_LIMIT, 1, MAX_LIMIT);
-		Cursor cursor = Cursor.decode(rawCursor, MY_NOTES);
-		JdbcClient.StatementSpec statement = this.jdbc.sql((cursor != null) ? PAGE_AFTER : PAGE_FIRST)
-			.param("author", author)
+		Cursor cursor = Cursor.decode(rawCursor, list);
+		JdbcClient.StatementSpec statement = this.jdbc.sql((cursor != null) ? after : first)
+			.param("traveler", traveler)
 			// 多取一筆：只用來判斷還有沒有下一頁，不上 wire。count(*) 要多掃一次整份列表。
 			.param("limit", size + 1);
 		if (cursor != null) {
@@ -225,7 +306,8 @@ class NoteService {
 			return new NotePage(items, null);
 		}
 		Note last = items.getLast();
-		return new NotePage(items, new Cursor(MY_NOTES, OffsetDateTime.parse(last.createdAt()), last.id()).encode());
+		return new NotePage(items,
+				new Cursor(list, OffsetDateTime.parse(sortKey.apply(last)), last.id()).encode());
 	}
 
 	/**
@@ -240,6 +322,67 @@ class NoteService {
 			.param("lng", at.longitude())
 			.query(NoteService::toHint)
 			.list());
+	}
+
+	/**
+	 * 走進 50m 撿起，全世界只有一人撿得到同一張。happy path 一句 SQL；影響 0 列才診斷。
+	 *
+	 * <p>刻意是 {@code public}：{@code @Transactional} 只作用在 public 方法上
+	 * （{@code AnnotationTransactionAttributeSource.publicMethodsOnly} 預設為 true），
+	 * 包內可見的話這個註解會被**靜默忽略**，撿取與診斷就落在兩個交易、兩條連線上。
+	 */
+	@Transactional
+	public Note pickup(UUID traveler, UUID id, PickupRequest request) {
+		Coordinate at = located((request != null) ? request.coordinate() : null);
+		return this.jdbc.sql(PICKUP)
+			.param("traveler", traveler)
+			.param("id", id)
+			.param("lat", at.latitude())
+			.param("lng", at.longitude())
+			.query(NoteService::toNote)
+			.optional()
+			.orElseGet(() -> diagnose(traveler, id, at));
+	}
+
+	/** 撿不到的原因。沒有這一列 ＝ 不存在；其餘六種由 {@link #verdict} 照固定順序判。 */
+	private Note diagnose(UUID traveler, UUID id, Coordinate at) {
+		return this.jdbc.sql(DIAGNOSE)
+			.param("traveler", traveler)
+			.param("id", id)
+			.param("lat", at.latitude())
+			.param("lng", at.longitude())
+			.query(NoteService::verdict)
+			.optional()
+			.orElseThrow(NoteService::notFound);
+	}
+
+	/**
+	 * 診斷的順序是契約的一部分，不能重排：已是自己的擺第一，回應遺失後的重試才會拿到
+	 * 成功而不是 {@code note_taken}（而且回的是**原本**那次的 {@code picked_up_at}——
+	 * 這裡沒有任何 UPDATE，時間戳沒有被改寫的機會）。已被撿走排在自己的便條之前，因為
+	 * 撿走是既成事實；旅遊紀錄與過期都回 {@code note_not_found}：區分等於向外人確認
+	 * 該座標有一張他看不到的便條。剩下的唯一可能就是太遠。
+	 */
+	private static Note verdict(ResultSet rs, int rowNum) throws SQLException {
+		if (rs.getBoolean("is_mine")) {
+			return toNote(rs, rowNum);
+		}
+		if (rs.getBoolean("is_taken")) {
+			throw new ApiException(HttpStatus.CONFLICT, "note_taken", null);
+		}
+		if (rs.getBoolean("is_own")) {
+			// 自己的（含自己的旅遊紀錄）：對自己沒有隱藏的必要。
+			throw new ApiException(HttpStatus.FORBIDDEN, "own_note", null);
+		}
+		if (rs.getBoolean("is_private") || rs.getBoolean("is_expired")) {
+			throw notFound();
+		}
+		throw new ApiException(HttpStatus.FORBIDDEN, "too_far", Map.of("distanceM", rs.getInt("distance_m")));
+	}
+
+	/** 不存在、別人的旅遊紀錄、已過期——三者對外是同一個答案。 */
+	private static ApiException notFound() {
+		return new ApiException(HttpStatus.NOT_FOUND, "note_not_found", null);
 	}
 
 	/**
