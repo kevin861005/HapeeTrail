@@ -86,6 +86,30 @@ class NoteService {
 
 	private static final String INSERT_PRIVATE = INSERT.formatted("n.audience = 'self'", MAX_PRIVATE, WIRE_COLUMNS);
 
+	/** 每頁筆數：省略時的預設與硬上界。契約把它們寫死了，client 端的預檢用的是同兩個數字。 */
+	private static final int DEFAULT_LIMIT = 50;
+
+	private static final int MAX_LIMIT = 100;
+
+	/** 游標裡的列表識別。收藏列表（票 08）用另一個值，兩支的游標因此互不相容。 */
+	private static final String MY_NOTES = "my_notes";
+
+	/**
+	 * keyset 分頁：以（{@code created_at}, {@code id}）為游標，不用 OFFSET。
+	 * OFFSET 在「翻頁期間又留了新便條」時會整批漏列，而且深頁要重掃前面所有列。
+	 * 平手鍵是 id：同刻的便條（同一批、同一個交易）只靠時間戳會整批重複或整批消失。
+	 */
+	private static final String PAGE = """
+			select %s from public.notes
+			 where author_id = :author %s
+			 order by created_at desc, id desc
+			 limit :limit
+			""";
+
+	private static final String PAGE_FIRST = PAGE.formatted(WIRE_COLUMNS, "");
+
+	private static final String PAGE_AFTER = PAGE.formatted(WIRE_COLUMNS, "and (created_at, id) < (:key, :id)");
+
 	private final JdbcClient jdbc;
 
 	NoteService(JdbcClient jdbc) {
@@ -143,13 +167,35 @@ class NoteService {
 							Map.of("maxPrivateNotes", MAX_PRIVATE)));
 	}
 
-	/** 我留過的便條，新→舊。過期的仍在（只是不再進探索），旅遊紀錄也在。 */
-	List<Note> myNotes(UUID author) {
-		return this.jdbc
-			.sql("select " + WIRE_COLUMNS + " from public.notes where author_id = :author order by created_at desc")
+	/**
+	 * 我留過的便條，{@code createdAt} 新→舊、以 id 平手。過期的仍在（只是不再進探索），
+	 * 旅遊紀錄也在——這份紀錄的完整性是 user story 15 本身。
+	 */
+	NotePage myNotes(UUID author, Long limit, String rawCursor) {
+		// 越界不報錯，靜默夾住：拒絕的話 client 算錯一次頁碼就整個列表打不開，夾住最多是這頁少幾筆。
+		// 收 long 而不是 int：`limit=99999999999` 是越界（該夾成 100），不是型別錯誤——
+		// 用 Integer 接的話 Spring 在轉型階段就 400 了，契約的「越界不報錯」在那裡靜默破掉。
+		// ponytail: 天花板搬到 2^63，沒有搬走。真要無上限就自己收字串再 parse，
+		// 但那要連「abc → 400 無 code」一起自己實作，換來的只是更大的一個數字。
+		int size = Math.clamp((limit != null) ? limit : DEFAULT_LIMIT, 1, MAX_LIMIT);
+		Cursor cursor = Cursor.decode(rawCursor, MY_NOTES);
+		JdbcClient.StatementSpec statement = this.jdbc.sql((cursor != null) ? PAGE_AFTER : PAGE_FIRST)
 			.param("author", author)
-			.query(NoteService::toNote)
-			.list();
+			// 多取一筆：只用來判斷還有沒有下一頁，不上 wire。count(*) 要多掃一次整份列表。
+			.param("limit", size + 1);
+		if (cursor != null) {
+			statement = statement.param("key", cursor.key()).param("id", cursor.id());
+		}
+		List<Note> rows = statement.query(NoteService::toNote).list();
+		boolean more = rows.size() > size;
+		List<Note> items = more ? rows.subList(0, size) : rows;
+		if (!more) {
+			// 只有真的還有下一筆才給游標 ⇒ nextCursor 為 null 是確定的終止訊號，
+			// client 不必為了確認結束多轉一次載入圈。
+			return new NotePage(items, null);
+		}
+		Note last = items.getLast();
+		return new NotePage(items, new Cursor(MY_NOTES, OffsetDateTime.parse(last.createdAt()), last.id()).encode());
 	}
 
 	/**

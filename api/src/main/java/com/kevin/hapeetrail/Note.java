@@ -1,5 +1,6 @@
 package com.kevin.hapeetrail;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -22,4 +23,8 @@ record Coordinate(Double latitude, Double longitude) {
  * 與「給了 0」必須分得開（0 是越界的代號，要回 {@code invalid_style_code}）。
  */
 record DropRequest(String content, Coordinate coordinate, Integer color, Integer style, String audience) {
+}
+
+/** 列表 envelope：items 永遠是陣列（不會是 null），nextCursor 為 null ＝ 沒有更多。 */
+record NotePage(List<Note> items, String nextCursor) {
 }
