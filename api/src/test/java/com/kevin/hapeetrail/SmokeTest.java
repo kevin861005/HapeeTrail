@@ -20,6 +20,7 @@ class SmokeTest extends SupabaseDbTest {
 	@LocalServerPort
 	int port;
 
+	/** 服務自己的連線——以 {@code hapeetrail_api} 這個最小權限角色連上。 */
 	@Autowired
 	JdbcClient jdbc;
 
@@ -30,11 +31,11 @@ class SmokeTest extends SupabaseDbTest {
 	 */
 	@Test
 	void migrationsAreApplied() {
-		assertThat(queryBoolean("select to_regclass('public.notes') is not null")).isTrue();
-		assertThat(queryBoolean("select count(*) = 3 from information_schema.columns"
+		assertThat(adminQueryBoolean("select to_regclass('public.notes') is not null")).isTrue();
+		assertThat(adminQueryBoolean("select count(*) = 3 from information_schema.columns"
 				+ " where table_schema = 'public' and table_name = 'notes'"
 				+ " and column_name in ('audience', 'color', 'style')")).isTrue();
-		assertThat(queryBoolean("select to_regclass('public.notes_author_private_ix') is not null")).isTrue();
+		assertThat(adminQueryBoolean("select to_regclass('public.notes_author_private_ix') is not null")).isTrue();
 	}
 
 	/**
@@ -44,18 +45,43 @@ class SmokeTest extends SupabaseDbTest {
 	 */
 	@Test
 	void migrationPrerequisitesArePresent() {
-		assertThat(queryBoolean("select to_regclass('auth.users') is not null")).isTrue();
-		assertThat(queryBoolean("select count(*) = 0 from auth.users")).isTrue();
-		assertThat(queryBoolean("select to_regprocedure('auth.uid()') is not null")).isTrue();
-		assertThat(queryBoolean("select count(*) = 2 from pg_roles"
+		assertThat(adminQueryBoolean("select to_regclass('auth.users') is not null")).isTrue();
+		assertThat(adminQueryBoolean("select count(*) = 0 from auth.users")).isTrue();
+		assertThat(adminQueryBoolean("select to_regprocedure('auth.uid()') is not null")).isTrue();
+		assertThat(adminQueryBoolean("select count(*) = 2 from pg_roles"
 				+ " where rolname in ('anon', 'authenticated')")).isTrue();
-		assertThat(queryBoolean("select exists (select from pg_extension e"
+		assertThat(adminQueryBoolean("select exists (select from pg_extension e"
 				+ " join pg_namespace n on n.oid = e.extnamespace"
 				+ " where e.extname = 'postgis' and n.nspname = 'extensions')")).isTrue();
 	}
 
+	/**
+	 * 服務被攻破時的攻擊面。用**服務自己的連線**問，所以它同時證明了「服務真的是以這個
+	 * 角色連上的」——換回超級使用者，最後兩條會立刻紅。
+	 */
+	@Test
+	void serviceConnectsAsTheLeastPrivilegedRole() {
+		assertThat(queryBoolean("select current_user = 'hapeetrail_api'")).isTrue();
+		assertThat(queryBoolean("select not rolsuper and not rolbypassrls"
+				+ " from pg_roles where rolname = current_user")).isTrue();
+
+		assertThat(queryBoolean("select has_table_privilege('public.notes', 'select')")).isTrue();
+		assertThat(queryBoolean("select has_table_privilege('public.notes', 'insert')")).isTrue();
+		assertThat(queryBoolean("select has_table_privilege('public.notes', 'update')")).isTrue();
+		// 契約沒有刪除路徑；有 DELETE 就是白給的攻擊面。
+		assertThat(queryBoolean("select has_table_privilege('public.notes', 'delete')")).isFalse();
+		// auth.users 只被 FK 用到，FK 檢查以表擁有者身分跑——服務不需要看得到使用者表。
+		assertThat(queryBoolean("select has_schema_privilege('auth', 'usage')")).isFalse();
+		// RLS 不關（notes_select_own 保留休眠），全列放行只給這個角色。
+		assertThat(adminQueryBoolean("select relrowsecurity from pg_class where oid = 'public.notes'::regclass")).isTrue();
+	}
+
 	private Boolean queryBoolean(String sql) {
 		return this.jdbc.sql(sql).query(Boolean.class).single();
+	}
+
+	private static Boolean adminQueryBoolean(String sql) {
+		return admin().sql(sql).query(Boolean.class).single();
 	}
 
 	@Test
