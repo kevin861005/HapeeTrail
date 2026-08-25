@@ -7,7 +7,14 @@
 （無）
 
 ## 待辦
-- [ ] **T3** UGC 檢舉機制（App Store 審查前必須；`report_note` RPC + 隱藏 flag）
+- [ ] **T19** 後端全換 Java／Spring Boot（依 **ADR-0011**；spec：`.scratch/java-rewrite/spec.md`、tickets：`.scratch/java-rewrite/issues/01–13`，✅ 2026-08-25 規劃完成；從 01／02／03 任一張開工）
+  範圍：`hapeetrail/` → `api/`、清 Copilot 殘骸、`hapeetrail_api` 最小權限角色、JdbcClient 實作五支端點、
+  契約 v4（openapi／notes.md／postman 三份同步）、Testcontainers 測試（搬 `notes.test.sql` 情境清單）、
+  Fly.io `nrt` 部署、hosted-smoke 改打 Spring、兩個獨立複核、一刀切 drop RPC；**CLAUDE.md 架構原則同步改**
+  **第一批 ticket 順序**：CLAUDE.md 改原則 → v4 openapi 先出交夥伴（contract-first，他尚未開工）→ 才動 Java
+- [ ] **T20** 產品正名 Trailstamp → HapeeTrail：CLAUDE.md、openapi 標題、`supabase/config.toml` project_id、
+  ADR／HANDOFF 標題、`docs/index.html`（`CONTEXT.md` 已定案）
+- [ ] **T3** UGC 檢舉機制（App Store 審查前必須；T19 之後在 Java 實作，不再寫 `report_note` RPC）
 
 ## 已完成
 
