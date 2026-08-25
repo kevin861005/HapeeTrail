@@ -15,8 +15,16 @@
   進度（施工順序表：`.scratch/java-rewrite/README.md`）：步 0–4 ✅ 完成（`cabc523`）；
   **步 5（票 10）部分完成 `7c54f9d`**——容器／fly.toml／部署 runbook 做完並本機驗過，
   **上真機那半段刻意延後到步 11 前**（Fly 無免費方案 ≈US$5.7/月，iOS 夥伴尚未開工，
-  票 10 要證的三件事已從本機證掉兩件）。下一張：步 6 = 票 05 留便條。
-  ⏸️ 等什麼：與 iOS 夥伴約定的開工日——那之前幾天再把 Fly 部署補完。
+  票 10 要證的三件事已從本機證掉兩件）。
+  **步 6–10 ✅ 完成 2026-08-25/26**：票 05 留便條 `39e44eb`、票 06 分頁 `7d137a9`、
+  票 07 探索 `3895128`、票 08 撿起＋收藏 `8dd0372`、票 09 閘門＋TTL＋超越量 `795568c`。
+  五支端點全部實作完畢，`cd api && ./mvnw test` **174 支綠**。
+  **下一張：步 11 = 票 11 驗收**（`.scratch/java-rewrite/issues/11-acceptance-newman-smoke.md`），
+  但它要先做票 10 延後的那半段（`fly apps create` → `secrets` → `deploy`，指令已填好在 `api/README.md`）。
+  ⏸️ 等什麼：①Fly 帳號綁付款方式 ②升 Supabase Pro ③與 iOS 夥伴約定的開工日。
+  ⚠️ 票 09 留了一個**待你裁決**的項目：CLAUDE.md 架構原則的「happy path 一句 SQL」
+  在加了撿取頻率閘門後已不準（現在是閘門一句＋UPDATE 一句），改 CLAUDE.md 或補 ADR-0011
+  都超出票面，未動——詳見 `.scratch/java-rewrite/issues/09-rate-gate-ttl-concurrency.md` 末段。
 - [ ] **T20** 產品正名 Trailstamp → HapeeTrail：CLAUDE.md、openapi 標題、`supabase/config.toml` project_id、
   ADR／HANDOFF 標題、`docs/index.html`（`CONTEXT.md` 已定案）
 - [ ] **T3** UGC 檢舉機制（App Store 審查前必須；T19 之後在 Java 實作，不再寫 `report_note` RPC）
