@@ -201,6 +201,7 @@
                   "  pm.response.to.have.status(400);",
                   "  const e = pm.response.json();",
                   "  pm.expect(e.code, 'code 是唯一的判斷依據；有 code ⇒ 業務錯誤').to.eql('invalid_cursor');",
+                  "  pm.expect(e.status, 'body 的 status 與 HTTP 狀態碼是同一個數字，只驗一邊就漏掉它們漂移的那天').to.eql(pm.response.code);",
                   "  pm.expect(e.status).to.eql(400);",
                   "});"
                 ],
@@ -266,6 +267,8 @@
                   "  pm.response.to.have.status(400);",
                   "  const e = pm.response.json();",
                   "  pm.expect(e.code).to.eql('invalid_audience');",
+                  "  pm.expect(e.status, 'body 的 status 與 HTTP 狀態碼是同一個數字').to.eql(pm.response.code);",
+                  "  pm.expect(e.status).to.eql(400);",
                   "  pm.expect(e.title, 'title 是給人看的摘要，不得拿來比對').to.be.a('string');",
                   "});"
                 ],
@@ -361,6 +364,8 @@
                   "  pm.response.to.have.status(404);",
                   "  const e = pm.response.json();",
                   "  pm.expect(e.code, '刻意不另設「這是私人便條」的 token——那等於向外人確認該座標有一張他看不到的便條').to.eql('note_not_found');",
+                  "  pm.expect(e.status, 'body 的 status 與 HTTP 狀態碼是同一個數字').to.eql(pm.response.code);",
+                  "  pm.expect(e.status).to.eql(404);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -388,7 +393,12 @@
                   "  pm.response.to.have.status(403);",
                   "  const e = pm.response.json();",
                   "  pm.expect(e.code).to.eql('too_far');",
+                  "  pm.expect(e.status, 'body 的 status 與 HTTP 狀態碼是同一個數字').to.eql(pm.response.code);",
+                  "  pm.expect(e.status).to.eql(403);",
                   "  pm.expect(e.details, 'v4 起 details 是物件（v3 是內容為 JSON 的字串）').to.be.an('object');",
+                  "  // 刻意只挑要用的那個鍵，不用 have.all.keys：往 details 加鍵是非破壞性變更（§8 明說），",
+                  "  // 凍結整組鍵名會讓「加一個鍵」變成假紅。",
+                  "  pm.expect(e.details).to.have.property('distanceM');",
                   "  pm.expect(e.details.distanceM, '伺服器當下算出的真實距離（此處約 130m）').to.be.within(120, 140);",
                   "});"
                 ],

@@ -325,12 +325,17 @@ curl -G "$BASE/v1/me/notes" -H "Authorization: Bearer $TOKEN" \
 
 **資料進出只有一條路：HapeeTrail 服務。** 業務規則全部在服務裡，資料庫只由服務以一個
 最小權限的角色存取；**Supabase 專案的 `/rest/v1/*` 對 client 角色完全不可達**
-（表與任何 `select=` 變體、寫入面、以及任何 RPC，一律 401／403／404），
+（表與任何 `select=` 變體、寫入面、以及所有內部 helper 函式，一律 401／403／404；
+**v3.3 的五支契約 RPC 是切換日前的唯一例外**，見本節末的過渡期聲明），
 Supabase 那一側對 client 只剩 `/auth/v1/*`。因此 `author_id`／`picked_up_by`／`location`
 這些不上 wire 的欄位**沒有任何 client 路徑讀得到**。
 
 - **服務只暴露契約列出的路徑**：五支業務端點 ＋ 不需認證的 `GET /actuator/health`
-  （只回 `{"status":"UP"}`，不揭露任何業務資料）。其餘 Actuator 端點沒有開。
+  （只回健康狀態，不揭露任何業務資料；實際 body 目前是
+  `{"groups":["liveness","readiness"],"status":"UP"}`——**body 的內容不屬於契約，
+  只保證 200 與 `status`**）。health 的兩個 group 子路徑（`/actuator/health/liveness`
+  ／`readiness`）帶合法 token 也回得到，同樣只有 `status`；其餘 Actuator 端點
+  （`env`／`beans`／`metrics`／`configprops`…）一律沒有開，帶合法 token 也是 404。
 - **座標與游標一律不進 URL**：探索與撿起是 POST、座標在 body。理由不變——URL 會進到
   存取日誌與各層 proxy 的快取。列表的 `limit`／`cursor` 在 query 是刻意的例外：
   游標不含座標，也不授予任何權限。
