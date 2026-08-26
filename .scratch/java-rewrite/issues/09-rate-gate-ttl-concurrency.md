@@ -105,6 +105,7 @@ Standards 與 Spec 兩個獨立 subagent，各自只拿標準／spec，不繼承
 - `CLAUDE.md` 架構原則寫著「診斷只在影響 0 列後才跑，**happy path 一句 SQL**」——
   加了頻率閘門後 happy path 是兩句。原子性的敘述仍然成立，但這半句已經不準。
   要改 `CLAUDE.md` 或補 ADR-0011 一行，都超出本票，**沒動**。
+  → ✅ 2026-08-26 裁決：改 `CLAUDE.md` 那半句為「閘門一句＋UPDATE 一句，診斷只在 UPDATE 影響 0 列後才跑」。
 - `expiresAt` 與三處 TTL 在 Java 端用的是 `Duration.ofDays(90)`＝固定 7776000 秒，
   v3.3 SQL 用的是 `interval '90 days'`（日曆運算）。Java 五處自洽；只有在**非 UTC 的
   資料庫 session** 且跨 DST 時會與 v3.3 差一小時。Fly 上 JVM 是 UTC ⇒ 實務無差異，

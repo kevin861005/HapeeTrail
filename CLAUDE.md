@@ -24,7 +24,7 @@
 - 距離與半徑一律在 SQL 語句內用 PostGIS geography 運算，
   Java 永遠不自己算距離——探索、撿取共用同一算法
 - 撿便條的原子性靠單句條件式 UPDATE（`RETURNING`）；
-  診斷只在影響 0 列後才跑，happy path 一句 SQL
+  happy path 是撿取頻率閘門一句＋UPDATE 一句，診斷只在 UPDATE 影響 0 列後才跑
 - 服務以最小權限角色 `hapeetrail_api` 連線，不用 `postgres` 超級使用者
 - schema 與 migration 仍由 `supabase/migrations` ＋ Supabase CLI 管，
   不引入 Flyway

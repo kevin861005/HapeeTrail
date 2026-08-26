@@ -11,17 +11,18 @@
 | 2 | 02 契約 v4 交夥伴 | — | `/implement .scratch/java-rewrite/issues/02-contract-v4-deliverables.md` | `redocly lint` 過、Pages 上看得到 v4；**你把三份產出交給夥伴並說「依 v4、勿碰 v3.3」** |
 | 3 | 03 骨架＋Testcontainers | Docker Desktop 開著 | `/implement .scratch/java-rewrite/issues/03-skeleton-and-testcontainers.md` | `mvn test` 綠：容器起、14 支 migration 套上、health 200 |
 | 4 | 04 JWT＋角色＋第一顆子彈 | session 會查證 JWT 簽章方式；**若是 HS256，由你在 dashboard（JWT Signing Keys）切到非對稱金鑰** | `/implement .scratch/java-rewrite/issues/04-jwt-and-first-tracer-bullet.md` | 五種壞 token 401、合法 token 拿到空列表；本機 `supabase db reset` 後舊測試仍全綠 |
-| 5 | 10 首次部署 Fly | ✅ 2026-08-25 **容器／fly.toml／runbook 完成**；上真機那半段**刻意延後到步 11 前**（Fly 無免費方案、夥伴尚未開工）。DB 端已全部就緒 | — | 容器本機起得來；pooler IPv4／`ES256`／角色權限**已以本機探針證實**（表在票內）。Fly 部署與延遲實測隨步 11 一起做 |
+| 5 | 10 首次部署 Fly | **2026-08-26 裁決：Fly 延到上線前。** 測試期夥伴打你 Mac 上的容器：`docker run`（`api/README.md`）＋ `tailscale serve --bg 8080`（拿到 `https://kevinchenmacbook-air.<tailnet>.ts.net`，有 TLS，iOS ATS 不用開例外）；夥伴手機裝 Tailscale 並加入你的 tailnet | — | 容器／fly.toml／runbook 已完成 `7c54f9d`；本機探針證過 pooler IPv4／ES256／角色權限。上 Fly 的 6 項移到「上線前」 |
 | 6 | 05 留便條 | — | `/implement .scratch/java-rewrite/issues/05-drop-note.md` | 全部驗證紅→綠、Note 9 鍵、型別錯誤 400 無 code |
 | 7 | 06 我的便條分頁 | — | `/implement .scratch/java-rewrite/issues/06-my-notes-pagination.md` | 29 張走完不重不漏、三種壞游標 400、跨使用者隔離 |
 | 8 | 07 探索 | — | `/implement .scratch/java-rewrite/issues/07-nearby.md` | 30／70／130m、上限 20、排除四類、EXPLAIN 計畫形狀記錄 |
 | 9 | 08 撿起＋收藏 | — | `/implement .scratch/java-rewrite/issues/08-pickup-and-collection.md` | 10 並行恰 1 贏、冪等回原 `pickedUpAt`、診斷順序七條 |
 | 10 | 09 閘門＋TTL＋超越量 | — | `/implement .scratch/java-rewrite/issues/09-rate-gate-ttl-concurrency.md` | 429＋`Retry-After`、89／90／91 三處一致、超越量數字寫進 ticket |
-| — | **升 Supabase Pro** | 你在 dashboard 升級（Free 閒置 7 天會暫停，夥伴測到一半會斷） | — | dashboard 顯示 Pro |
-| 11 | 11 驗收 | **先做票 10 延後的那半段**（`fly apps create` → `secrets` → `deploy --ha=false`，指令都填好在 `api/README.md`）；與夥伴約好開工日 | `/implement .scratch/java-rewrite/issues/11-acceptance-newman-smoke.md` | newman 對 Fly 30 輪 0 失敗；smoke 全過；**你通知夥伴環境可用** |
+| — | ~~升 Supabase Pro~~ | **2026-08-26 裁決：測試期不升**，穩定後再考慮（上線前必升）。代價：Free 閒置 7 天會暫停——測試前先看 dashboard，暫停就按 Restore | — | — |
+| 11 | 11 驗收 | 本機容器起著＋`tailscale serve` 開著；夥伴已裝 Tailscale、約好開工日 | `/implement .scratch/java-rewrite/issues/11-acceptance-newman-smoke.md` | newman 對本機容器（連 hosted Supabase）30 輪 0 失敗；smoke 全過；openapi `servers` 換成 ts.net 網址；**你通知夥伴環境可用** |
 | 12 | 12 兩個獨立複核 | — | 見下方「12 的 prompt」 | 兩份報告記進 ticket；**發現先回報、你同意才修** |
 | — | **與夥伴約切換日** | 他確認 app 已改打 v4、不再打 `/rest/v1/rpc/*` | — | 日期寫進 HANDOFF |
 | 13 | 13 切換 | 切換日當天才開 | `/implement .scratch/java-rewrite/issues/13-cutover.md` | 切換 migration 已 push；smoke 正面斷言 `/rest/v1/*` 全 401／403／404；newman 再全綠；`notes.test.sql` 刪除；T19 打勾 |
+| — | **上線前** | 綁 Fly 付款 → 票 10 剩餘 6 項（`fly apps create` → `secrets` → `deploy --ha=false`）→ 升 Supabase Pro → openapi `servers` 換 Fly 網址 → 夥伴改 base URL | 到時開 ticket | 真 GoTrue token 打 Fly 200；dashboard 顯示 Pro |
 
 ## 12 的 prompt（不用 `/implement`）
 

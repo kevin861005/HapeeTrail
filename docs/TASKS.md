@@ -21,7 +21,7 @@
   五支端點全部實作完畢，`cd api && ./mvnw test` **174 支綠**。
   **下一張：步 11 = 票 11 驗收**（`.scratch/java-rewrite/issues/11-acceptance-newman-smoke.md`），
   但它要先做票 10 延後的那半段（`fly apps create` → `secrets` → `deploy`，指令已填好在 `api/README.md`）。
-  ⏸️ 等什麼：①Fly 帳號綁付款方式 ②升 Supabase Pro ③與 iOS 夥伴約定的開工日。
+  ⏸️ 等什麼：iOS 夥伴約定的開工日＋他裝好 Tailscale（2026-08-26 裁決：測試期本機容器＋`tailscale serve` 供夥伴串接；Fly 與 Supabase Pro 都延到上線前）。
   ⚠️ 票 09 留了一個**待你裁決**的項目：CLAUDE.md 架構原則的「happy path 一句 SQL」
   在加了撿取頻率閘門後已不準（現在是閘門一句＋UPDATE 一句），改 CLAUDE.md 或補 ADR-0011
   都超出票面，未動——詳見 `.scratch/java-rewrite/issues/09-rate-gate-ttl-concurrency.md` 末段。

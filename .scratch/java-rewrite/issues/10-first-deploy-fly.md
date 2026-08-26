@@ -188,3 +188,10 @@ health check 打 `/actuator/health`（`grace_period=30s`、`timeout=5s`）、`fo
 - [x] 部署步驟寫成可重跑的說明（`api/README.md`，已填入今天查證到的實際值）
 - [ ] OpenAPI `servers` placeholder ⏸️ 延後——網址 `https://hapeetrail.fly.dev` 與定案的 app 名稱
       一致，但**沒真的部署前那段「⚠️ 目前是 placeholder」的警語不能拿掉**，拿掉就是對夥伴說謊。
+
+## 2026-08-26 裁決：Fly 延到上線前，測試期改本機＋Tailscale 供夥伴串接（使用者裁決）
+
+推翻上一段「開工日前幾天上 Fly」。測試期環境＝Kevin 的 Mac 跑本票做好的容器（`api/README.md`「本機跑容器」），
+以 `tailscale serve --bg 8080` 對 tailnet 提供 HTTPS（ts.net 憑證，iOS ATS 不需例外）；夥伴手機裝 Tailscale。
+本票剩餘 6 個 ⏸️ 項全部移到「上線前」再做（README 順序表最後一列）。接受的限制：電腦要開著、只有 tailnet 內連得到、
+驗收（票 11）打的是本機而非雲端；上線前上 Fly 時要再跑一次票 11 的 newman。

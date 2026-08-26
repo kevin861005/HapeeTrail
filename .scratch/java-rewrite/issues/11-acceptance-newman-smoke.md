@@ -12,9 +12,9 @@
 - [x] 煙霧測試暫時保留 RPC 版的斷言（切換前 RPC 仍在）；切換後的斷言在 13 改
 - [x] 語意文件 §10「契約外路徑」與實測一致（實測抓到兩處不符，已改文件）
 - [x] 三份契約產出交叉比對：token 清單、狀態碼、鍵名三方逐字一致
-- [ ] **newman 對 Fly 上的服務跑 30 輪**（等 `fly apps create` → `secrets` → `deploy --ha=false`）
-- [ ] **煙霧測試對 hosted 跑一次**（同上）
-- [ ] 通知夥伴測試環境可用（HANDOFF 記錄）
+- [ ] **newman 對本機容器跑 30 輪**（容器連 hosted Supabase；經 `tailscale serve` 的 https 網址打，與夥伴同一條路；2026-08-26 裁決 Fly 延到上線前）
+- [ ] **煙霧測試跑一次**：服務＝本機容器的 ts.net 網址、auth＝hosted Supabase（Free，先確認沒被暫停）
+- [ ] openapi `servers` 第一項改為 ts.net 網址（拿掉 Fly placeholder 警語，Fly 移到「上線前」註記）；通知夥伴：Tailscale 加入方式＋網址＋apikey（HANDOFF 記錄）
 
 ---
 
