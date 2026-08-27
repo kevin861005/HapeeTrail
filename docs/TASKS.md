@@ -27,7 +27,7 @@
   MagicDNS 的 **http** 位址 ②30 輪撞 hosted 匿名登入上限（30 次/小時/IP）⇒ 改 15 輪。
   兩軸 `/code-review` 各自抓到實質問題並已修（含「憑證只擋 https、DNS 名照樣可用」這個誤判）。
   **下一張：步 12 = 兩個獨立複核**（`.scratch/java-rewrite/issues/12-*.md`；派兩個 subagent，只給 spec 與 ADR-0011）。
-  ⏸️ 等什麼：iOS 夥伴約定的開工日＋他裝好 Tailscale 加入 tailnet（2026-08-26 裁決：測試期本機容器供夥伴串接；Fly 與 Supabase Pro 都延到上線前）。
+  ✅ 2026-08-27 夥伴已收到串接包（tailnet 網址、publishable key、ATS 注意事項、文件連結），開始串接。下一張：步 12 兩個獨立複核（不依賴夥伴進度）。
   ⚠️ 通知夥伴的訊息**尚未發出**（tailnet 加入方式＋網址＋apikey 取得方式已備在 `.claude/HANDOFF.local.md`）。
   ⚠️ 票 09 留了一個**待你裁決**的項目：CLAUDE.md 架構原則的「happy path 一句 SQL」
   在加了撿取頻率閘門後已不準（現在是閘門一句＋UPDATE 一句），改 CLAUDE.md 或補 ADR-0011
