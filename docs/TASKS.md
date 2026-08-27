@@ -38,7 +38,12 @@
   ⚠️ contract pack 已於 `9e40191` 交付夥伴，`content:123` 與 `audience:5` 的錯誤**類別**變了，
   他的 error switch 會走到不同分支，**需要通知他重看 §11**。
   新增必填環境變數 `HAPEETRAIL_JWT_ISSUER`（已進 `fly.toml` `[env]` 與 `api/README.md`）。
-  **下一張：步 13 = 切換**（切換日當天才開；開工前先補跑 newman／hosted 煙霧，那是票 14 未驗的一格）。
+  **wire 層已補驗（2026-08-27 16:45）**：本機容器重建並換到新碼＋新環境變數，
+  hosted 煙霧 **33 項全綠**、newman **13 輪 208/208 斷言 0 失敗**（直接吃交付用的 environment 檔）、
+  真 GoTrue token 實測 **ES256 且 `iss` 與設定值逐字相同**（S1／S2 沒誤擋真 token）、
+  四種改了行為的請求對真 hosted 逐一確認 400 無 `code`，對照組未誤傷。
+  commit `26dd65e`（程式＋文件＋票）。
+  **下一張：步 13 = 切換**（切換日當天才開）。
   ✅ 2026-08-27 夥伴已收到串接包（tailnet 網址、publishable key、ATS 注意事項、文件連結），開始串接。
   ⚠️ 通知夥伴的訊息**尚未發出**（tailnet 加入方式＋網址＋apikey 取得方式已備在 `.claude/HANDOFF.local.md`）。
   ⚠️ 票 09 留了一個**待你裁決**的項目：CLAUDE.md 架構原則的「happy path 一句 SQL」

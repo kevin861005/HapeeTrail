@@ -20,9 +20,9 @@
 | — | ~~升 Supabase Pro~~ | **2026-08-26 裁決：測試期不升**，穩定後再考慮（上線前必升）。代價：Free 閒置 7 天會暫停——測試前先看 dashboard，暫停就按 Restore | — | — |
 | 11 | 11 驗收 | 本機容器起著＋`tailscale serve` 開著；夥伴已裝 Tailscale、約好開工日 | `/implement .scratch/java-rewrite/issues/11-acceptance-newman-smoke.md` | newman 對本機容器（連 hosted Supabase）30 輪 0 失敗；smoke 全過；openapi `servers` 換成 ts.net 網址；**你通知夥伴環境可用** |
 | 12 | 12 兩個獨立複核 | — | 見下方「12 的 prompt」 | ✅ 2026-08-27：0 CRITICAL／2 MAJOR／13 MINOR，結論與處置記進票 12 文末 |
-| 12.5 | 14 複核發現修正 | — | `/implement .scratch/java-rewrite/issues/14-review-fixes.md` | ✅ 2026-08-27：兩條 MAJOR ＋ JWT 的 `iss`／缺 `exp`，`./mvnw test` **189 綠**、獨立驗收有條件通過（9 MINOR、零迴歸）；契約升 v4.0.1 |
+| 12.5 | 14 複核發現修正 | — | `/implement .scratch/java-rewrite/issues/14-review-fixes.md` | ✅ 2026-08-27：兩條 MAJOR ＋ JWT 的 `iss`／缺 `exp`，`./mvnw test` **189 綠**、獨立驗收有條件通過（9 MINOR、零迴歸）；契約升 v4.0.1；**wire 層已補驗**——容器換到新碼、hosted 煙霧 33 全綠、newman 13 輪 208/208、真 ES256 token 的 `iss` 與設定值逐字相同 |
 | — | **與夥伴約切換日** | 他確認 app 已改打 v4、不再打 `/rest/v1/rpc/*` | — | 日期寫進 HANDOFF |
-| 13 | 13 切換 | 切換日當天才開；**先補跑 newman／hosted 煙霧**（票 14 改了 401 範圍與 body 鍵序、改了兩種請求的錯誤類別，那格是票 14 未驗的） | `/implement .scratch/java-rewrite/issues/13-cutover.md` | 切換 migration 已 push；smoke 正面斷言 `/rest/v1/*` 全 401／403／404；newman 再全綠；`notes.test.sql` 刪除；T19 打勾 |
+| 13 | 13 切換 | 切換日當天才開（票 14 的 wire 層缺口已於 2026-08-27 補驗，見票 14 文末） | `/implement .scratch/java-rewrite/issues/13-cutover.md` | 切換 migration 已 push；smoke 正面斷言 `/rest/v1/*` 全 401／403／404；newman 再全綠；`notes.test.sql` 刪除；T19 打勾 |
 | — | **上線前** | 綁 Fly 付款 → 票 10 剩餘 6 項（`fly apps create` → `secrets` → `deploy --ha=false`）→ 升 Supabase Pro → openapi `servers` 換 Fly 網址 → 夥伴改 base URL | 到時開 ticket | 真 GoTrue token 打 Fly 200；dashboard 顯示 Pro |
 
 ## 12 的 prompt（不用 `/implement`）

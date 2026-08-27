@@ -169,3 +169,66 @@ M2 未誤傷：`color`／`style` 整數、`audience` 字串、`content:"123"`、
   ⚠️ **票 13 切換前必須補這格**：本票改了 401 的範圍與 body 鍵序、改了兩種請求的錯誤類別。
 - **client abort 的日誌噴發**：5 次 raw socket 中斷未觀察到 ERROR 行，
   但結論是「未觀察到迴歸」，不是「已排除」。
+
+## wire 層驗證（2026-08-27 16:35–16:45，對真 hosted）
+
+驗收者只跑了 JVM 測試與 `check-contract.py`，明列「newman／hosted 煙霧未跑、
+真 GoTrue 的 ES256 未端到端」為未驗證項。本節補上那一格。
+
+**容器已換到票 14 的碼**：`docker build` 重建 `hapeetrail-api:local`，
+以既有的五個 `SPRING_*` 環境變數 ＋ 新的 `HAPEETRAIL_JWT_ISSUER` 重啟
+（issuer 值由既有的 `JWK_SET_URI` **推導**，不另打一次以免兩處漂移）。
+health 200（第 3 次探測）。舊容器改名保留驗完才刪。
+
+### ① hosted 煙霧 **33 項全綠**
+
+打 `http://kevinchenmacbook-air.tailac7ba7.ts.net:8080`，用真 GoTrue token。
+②那六項（五支端點）就是 JWKS＋ES256＋pooler＋角色權限的綜合驗證，全過
+⇒ **S1／S2 沒有把真 token 擋掉**，這是本票最大的未驗項。
+④那七項確認 fail-closed 的 401 形狀在真服務上不變。
+⑥那 16 項確認 ADR-0007 仍成立（過渡期五支 RPC 仍活著，如票 13 所預期）。
+
+### ② 真 GoTrue token 的形狀（直接解碼確認，不靠推測）
+
+```
+alg=ES256 | iss=https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1 | exp 存在
+```
+
+`iss` 與 `HAPEETRAIL_JWT_ISSUER` 逐字相同 ⇒ S1 的設定值是對的，不是碰巧沒擋到。
+
+### ③ 票 14 改了行為的四種請求（真 hosted、真 token）
+
+```
+content: 123          → 400 無 code  {"type":"about:blank","status":400,"title":"Bad Request"}
+content: true         → 400 無 code  同上
+audience: 5           → 400 無 code  同上
+content 含 U+0000     → 400 無 code  同上（本票之前是 500）
+```
+
+對照組（行為不該變，確認沒有誤傷）：
+
+```
+content: "probe-t14"  → 200，Note 9 鍵、時間戳六位小數、expiresAt 為推導值
+audience: "nope"      → 400 **有** code: invalid_audience（業務錯誤仍是業務錯誤）
+latitude 給字串        → 400 無 code（反方向的型別錯誤沒被動到）
+```
+
+401 body 實測 `{"type":"about:blank","status":401,"title":"not_authenticated","code":"not_authenticated"}`
+——與 `ApiErrors` 的產出逐字相同。
+
+### ④ newman **13 輪 / 208 requests / 208 assertions / 0 failed**（20.5s）
+
+**刻意不帶 `--env-var base_url`**，直接吃交付給夥伴的 `hapeetrail-hosted.postman_environment.json`
+——驗的是那份檔本身。平均 85ms（min 3ms、max 306ms）。
+
+**輪數 13 而非票 11 的 15，理由是配額**：hosted 匿名登入 30 次／小時／IP，
+本次煙霧用掉 2、探針用掉 1、newman 每輪 2 ⇒ 13 輪＝26，合計 29，剛好在上限內。
+要跑滿 15 輪得先在 dashboard 調高 Anonymous sign-ins。
+
+### 仍未驗證（誠實揭露）
+
+- **`sub` 非 UUID、`iss` 不符、缺 `exp`、使用者已刪** 這四種 401 只有 JVM 測試涵蓋。
+  對真 hosted 驗需要偽造 GoTrue 簽章（做不到）或用 service_role 刪使用者（刻意不用）。
+- **catch-all 的 500** 在真服務上沒有觸發點——U+0000 那條原本是它的觸發器，現在被 400 擋在前面。
+  這是好事，但也代表 catch-all 只有 `ErrorEnvelopeTest` 守著。
+- hosted 留下一張探針便條 `probe-t14`（`c4873ed3-…`）與煙霧的測試便條，比照票 11 的先例不清。
