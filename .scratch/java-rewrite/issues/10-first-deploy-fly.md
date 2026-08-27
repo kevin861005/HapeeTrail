@@ -186,8 +186,10 @@ health check 打 `/actuator/health`（`grace_period=30s`、`timeout=5s`）、`fo
 - [ ] 真 token 打 Fly 拿 200 空列表 ⏸️ 延後（真 token 本身已拿到並驗過形狀）
 - [ ] 首位元組延遲實測 ⏸️ 延後（沒機器可測）
 - [x] 部署步驟寫成可重跑的說明（`api/README.md`，已填入今天查證到的實際值）
-- [ ] OpenAPI `servers` placeholder ⏸️ 延後——網址 `https://hapeetrail.fly.dev` 與定案的 app 名稱
-      一致，但**沒真的部署前那段「⚠️ 目前是 placeholder」的警語不能拿掉**，拿掉就是對夥伴說謊。
+- [x] ~~OpenAPI `servers` placeholder ⏸️ 延後~~ **2026-08-27 由票 11 做掉**：測試期不上 Fly，
+      `servers[0]` 改成 tailnet 的 MagicDNS 網址（`http://kevinchenmacbook-air.tailac7ba7.ts.net:8080`），
+      Fly 網址降級成「上線前會換成這個」的註記。當初「警語不能拿掉」的顧慮仍然成立，
+      只是解法變成**寫出真的連得到的位址**，而不是留一個假的。
 
 ## 2026-08-26 裁決：Fly 延到上線前，測試期改本機＋Tailscale 供夥伴串接（使用者裁決）
 

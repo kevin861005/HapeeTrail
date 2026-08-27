@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 09, 10
 
-**Status:** 本機半段完成（2026-08-26）；**Fly 半段待部署**
+**Status:** 本機半段完成（2026-08-26）；**tailnet 半段完成（2026-08-27）**；Fly 留到上線前
 
 - [x] ~~newman 對 Fly 上的服務~~ **對本機起的 Java 服務**：16 支斷言全綠、連跑 **30 輪 480 支斷言 0 失敗**（每輪隨機地點，T14 手法）
 - [x] collection 斷言看 `status` 與 `code`、`details` 為物件；`details` 斷言不凍結非破壞性變更
@@ -12,9 +12,12 @@
 - [x] 煙霧測試暫時保留 RPC 版的斷言（切換前 RPC 仍在）；切換後的斷言在 13 改
 - [x] 語意文件 §10「契約外路徑」與實測一致（實測抓到兩處不符，已改文件）
 - [x] 三份契約產出交叉比對：token 清單、狀態碼、鍵名三方逐字一致
-- [ ] **newman 對本機容器跑 30 輪**（容器連 hosted Supabase；經 `tailscale serve` 的 https 網址打，與夥伴同一條路；2026-08-26 裁決 Fly 延到上線前）
-- [ ] **煙霧測試跑一次**：服務＝本機容器的 ts.net 網址、auth＝hosted Supabase（Free，先確認沒被暫停）
-- [ ] openapi `servers` 第一項改為 ts.net 網址（拿掉 Fly placeholder 警語，Fly 移到「上線前」註記）；通知夥伴：Tailscale 加入方式＋網址＋apikey（HANDOFF 記錄）
+- [x] **newman 對本機容器跑 ~~30~~ 15 輪**（容器連 hosted Supabase；打 tailnet 網址）——輪數與網址協定的兩處變更見下方「2026-08-27 的兩個裁決」。
+  ⚠️ **不是**「與夥伴同一條路」：跑的機器就是跑容器的那台，流量沒有真的過 WireGuard，見裁決 ③
+- [x] **煙霧測試跑一次**：服務＝本機容器的 tailnet 網址、auth＝hosted Supabase（Free，已確認 ACTIVE 沒被暫停）→ **33 項全綠**
+- [x] openapi `servers` 第一項改為 tailnet 網址（Fly 移到「上線前」註記）；三份契約產出同步（見下方交付物）
+- [x] 通知夥伴用的資料（tailnet 加入方式＋網址＋apikey 取得方式）寫進 `.claude/HANDOFF.local.md`
+      ——**訊息本身還沒發出去**，等與夥伴約好開工日
 
 ---
 
@@ -28,6 +31,67 @@ Supabase **維持 Free**（不升 Pro）——閒置 7 天會暫停，通知夥�
 `./mvnw spring-boot:run` 以 `hapeetrail_api` 角色連本機 DB、JWKS 指本機 GoTrue
 （**本機 GoTrue 也是 `ES256`**，與 hosted 一致，所以 `JWS_ALGORITHMS=RS256,ES256` 這條路徑真的被走到）。
 
+## 2026-08-27 的兩個裁決（tailnet 半段）
+
+票上寫的是「經 `tailscale serve` 的 **https** ts.net 網址、跑 **30** 輪」。兩處都撞到外部限制，
+使用者當場裁決，**票的字面沒做到，做到的是它要證的東西**：
+
+### ① https ts.net → `http://100.94.228.79:8080`（tailnet 直連）
+
+`tailscale serve --bg 8080` **會卡住不回、serve config 保持空的**。原因用 `tailscale cert` 問出來：
+
+```
+$ tailscale cert --cert-file /dev/null --key-file /dev/null kevinchenmacbook-air.tailac7ba7.ts.net
+500 Internal Server Error: your Tailscale account does not support getting TLS certs
+```
+
+tailnet（`painpoint-ai.com`）的 **HTTPS Certificates 開關是關的**，serve 拿不到憑證就一直等。
+選項給了「去 admin console 開」與「不開憑證、改用 tailnet 內部位址」，**使用者選後者**——
+不動帳號設定，代價是夥伴那端要自行處理 cleartext HTTP 的平台限制（openapi 已寫明，
+但**不替 iOS 做實作決定**，CLAUDE.md 的分工）。傳輸仍由 tailnet 的 WireGuard 加密。
+
+⚠️ **這裡我原本少走一步，複核抓出來後已改**：第一版直接改用裸 IP `100.94.228.79`，
+理由寫「拿不到憑證所以不能用網址」——**錯的**。憑證開關只擋 **https**，MagicDNS 名在
+http 下完全可用，實測 `http://kevinchenmacbook-air.tailac7ba7.ts.net:8080/actuator/health`
+→ **200**、解析到 `100.94.228.79`。改用 MagicDNS 名之後：節點換 IP 不必改契約、
+夥伴端要做 domain-based 的 cleartext 例外也才有域名可寫、tailnet suffix 自己寫在網址裡
+（**`tailac7ba7.ts.net`**——夥伴照這個確認自己加對 tailnet）。三份契約產出用的都是這個網址。
+
+（另：`tailscale status` 裡的 `macbook-pro.tail0cb7bc.ts.net` 是**別人共享進來的節點**，
+suffix 不是本 tailnet 的，抄錯很容易——本 tailnet 一律 `tailac7ba7.ts.net`。）
+
+### ② 30 輪 → 15 輪（hosted 匿名登入速率上限）
+
+票上那條「hosted 很可能擋」的警語**實測成立**，而且比預期硬：
+
+```
+第一次（-n 30）：iterations 30／0 failed，assertions 480／143 failed
+                 失敗全部源自 signup 429（每輪 2 次 signup ＝ 60 次 > 上限 30／小時／IP），
+                 後半段每輪從「匿名登入（B）」開始整串垮掉
+第二次（-n 15，配額已被上一次抽乾）：assertions 240／225 failed
+                 30 次 signup 全部 429，第 1 輪就開始 401 連鎖
+```
+
+選項給了「去 dashboard 把上限調高到 150」與「改跑 15 輪」，**使用者選後者**——不動 hosted 設定。
+15 輪 × 2 ＝ 30 次 signup，**恰好等於預設上限**，所以跑之前配額必須是滿的
+（token bucket 以 30／小時回填，抽乾後要等約一小時）。
+
+### ③ 一個**沒有**被證明的東西（誠實揭露）
+
+newman 與煙霧測試都是**從跑容器的那台 Mac 自己**打自己的 tailnet 位址，
+**不是**從第二個 tailnet 節點打進來的——所以「夥伴的裝置連得到」這件事**沒有被實測證明**。
+已證明的只是路徑上沒有已知阻擋：
+
+- macOS 應用程式防火牆 **disabled**（`socketfilterfw --getglobalstate` → State = 0）
+- 容器 port 綁在 `0.0.0.0:8080`（`docker ps` 的 `0.0.0.0:8080->8080/tcp`）
+- tailnet 裡 `kevinchenmac-mini` 線上，但**沒有節點開 Tailscale SSH**，
+  所以無法從別台跑一次 curl 來收掉這個缺口。
+
+**夥伴第一次連線時要當面確認**；連不到先查 tailnet 成員資格與 ACL，別先懷疑後端。
+
+**這兩個裁決都是「不動外部帳號設定」的同一個取捨**：測試期的環境保持零設定變更，
+成本記在文件與輪數上。上線前搬到 Fly（https）時兩個限制都自動消失。
+
 ## 交付物
 
 | 檔 | 是什麼 |
@@ -36,6 +100,21 @@ Supabase **維持 Free**（不升 Pro）——閒置 7 天會暫停，通知夥�
 | `docs/api/postman/hapeetrail.postman_collection.json` | 四個錯誤示範的斷言硬化（+10 行） |
 | `supabase/tests/hosted-smoke.sh` | 改寫為 v4／Java 版，六節 33 項 |
 | `docs/api/notes.md` | §10 兩處與實測不符，已改 |
+
+**2026-08-27 追加（tailnet 半段，三份契約產出同步）**：
+
+| 檔 | 改了什麼 |
+|---|---|
+| `docs/api/openapi.yaml` | `servers` 第一項 `https://hapeetrail.fly.dev` → `http://100.94.228.79:8080`，描述寫明「要先加入 tailnet」「是 http 不是 https」「上線前換 Fly」 |
+| `docs/api/postman/hapeetrail-hosted.postman_environment.json` | `base_url` 同上；`name` 改 `HapeeTrail Test (tailnet 服務 ＋ hosted auth)`（原名「Hosted (Tokyo)」現在會誤導：auth 在 hosted，服務在 tailnet） |
+| `docs/api/notes.md` | §0 的 `$BASE` 範例值同步 |
+
+三處改完 `check-contract.py` 仍 exit 0、`redocly lint` 仍 valid（1 個既有 warning）。
+⚠️ **但「三方 base URL 一致」不是這兩支工具驗的**——`check-contract.py` 只比 token／狀態碼／
+鍵名，`servers` 不在它的掃描範圍。base URL 的一致性目前**只有人工比對**（複核那一軸
+獨立比過一次，三處逐字相同）。要讓它進工具是另一張票的事，本票沒做。
+**`supabase/tests/hosted-smoke.sh` 的預設值刻意沒動**（仍是 `https://hapeetrail.fly.dev`）：
+它是部署當天 2 參數用法的預設，測試期一律給第 3 個參數。
 
 ## 證據
 
@@ -79,7 +158,7 @@ $ supabase/tests/hosted-smoke.sh http://127.0.0.1:54321 sb_publishable_… http:
 ④ JWT fail-closed     無 token 四支全 401（GET 兩支再驗 code=not_authenticated）、簽章被改過的
                       token 401、**publishable key 當 Bearer 401、只帶 apikey 401**（anon 身分）
 ⑤ /actuator/health    200 status=UP，不帶任何認證
-⑥ Supabase 那一側     表三種 select= 變體與寫入面 403、六支內部 helper 403／404、anon 兩條 401；
+⑥ Supabase 那一側     表兩種 select= 變體與寫入面 403、六支內部 helper 403／404、anon 兩條 401；
                       **過渡期正面斷言 v3.3 五支契約 RPC 仍活著**（票 13 把這一組翻面）
 ── 通過 33 項，失敗 0 項
 ```
@@ -125,7 +204,7 @@ $ supabase/tests/hosted-smoke.sh http://127.0.0.1:54321 sb_publishable_… http:
 
 | §10 的說法 | 實測 | 判定 |
 |---|---|---|
-| 表與任何 `select=` 變體、寫入面 401／403／404 | 三種 `select=` 變體與 POST 全 **403** | ✅ 相符 |
+| 表與任何 `select=` 變體、寫入面 401／403／404 | 兩種 `select=` 變體與 POST 全 **403** | ✅ 相符 |
 | 內部 helper 不可達 | 六支全 **403／404** | ✅ 相符 |
 | 「**以及任何 RPC**，一律 401／403／404」 | `my_notes`／`my_collection` 送 `{}` 回 **200 帶資料**（其餘三支 404 只是因為缺必填參數，函式仍在） | ❌ **與同一節末的「過渡期聲明」自相矛盾** |
 | `/actuator/health`「只回 `{"status":"UP"}`」 | 實際是 `{"groups":["liveness","readiness"],"status":"UP"}` | ❌ **不符** |
@@ -144,15 +223,76 @@ $ supabase/tests/hosted-smoke.sh http://127.0.0.1:54321 sb_publishable_… http:
 `cd api && ./mvnw test` → **174 支綠**（surefire 目錄裡另有 `ExplainHarness`／`ProbeTest`
 兩份 8/25 的殘留報告，不是這次跑的，別把總數當成 176）。
 
+### ⑦ tailnet 半段的兩支實測（2026-08-27，容器 ↔ hosted Supabase）
+
+環境：`docker run -d --name hapeetrail-api`（映像 `hapeetrail-api:local`，建於 2026-08-27 01:26 UTC，
+晚於最後一次動 `api/src` 的 commit `795568c`）＝ **DB 走 hosted session pooler
+（`hapeetrail_api.iwkuywlrggxolyoiyrui`）、JWKS 指 hosted GoTrue**；
+newman／煙霧測試打 `http://kevinchenmacbook-air.tailac7ba7.ts.net:8080`。
+Supabase 專案狀態 ACTIVE（沒被暫停）。
+
+⚠️ **兩支不能在同一小時內跑**：newman 15 輪要 30 次 signup ＝ 剛好吃光整桶配額，
+煙霧測試自己還要 2 次。實際執行時間就是被這件事排開的——
+煙霧測試 **10:14**（裸 IP 版）與 **11:30**（MagicDNS 版）、newman 15 輪 **11:20**。
+順序照抄成「連著跑」一定紅。
+
+**newman 15 輪：**
+
+```
+$ npx newman run docs/api/postman/hapeetrail.postman_collection.json \
+    -e docs/api/postman/hapeetrail-hosted.postman_environment.json \
+    --env-var base_url=http://100.94.228.79:8080 \
+    --env-var apikey=sb_publishable_… -n 15
+iterations 15／0 failed   requests 240／0   assertions 240／0   duration 27.1s
+average response time 99ms [min 4ms, max 1021ms, s.d. 100ms]
+```
+
+⚠️ **這一輪打的是裸 IP**（11:20 執行，當時契約產出裡還是 IP）。複核抓出應改 MagicDNS 名之後
+**沒有重跑 newman**——配額當時已被這 30 次 signup 吃光，重跑要再等一小時。
+補驗的是煙霧測試那一支（下面那塊，11:30，打 MagicDNS 名、33 項全綠），
+兩者打到的是**同一個 TCP endpoint**（`dig` → `100.94.228.79`，服務不做 host-based routing）。
+**要百分之百對齊契約字面的話，newman 對 MagicDNS 名還欠一次重跑**——記在這裡不含糊帶過。
+
+16 支斷言 × 15 輪。**apikey 用 `--env-var` 帶進去，沒有落進 git**
+（hosted environment 檔的 `apikey` 仍刻意留空）。
+對照本機半段的 6.5s／480 支：這次慢是因為 auth 與 DB 都在東京 hosted，`max 1021ms` 是第一顆 signup 的冷啟。
+
+**煙霧測試：**
+
+```
+$ supabase/tests/hosted-smoke.sh iwkuywlrggxolyoiyrui sb_publishable_… \
+    http://kevinchenmacbook-air.tailac7ba7.ts.net:8080
+── 服務 http://kevinchenmacbook-air.tailac7ba7.ts.net:8080
+── Supabase https://iwkuywlrggxolyoiyrui.supabase.co
+① 匿名登入 2 ② 五支業務端點 6 ③ Unicode 空白 1 ④ JWT fail-closed 7
+⑤ /actuator/health 1 ⑥ Supabase 那一側 16（含過渡期五支 RPC 仍活著）
+── 通過 33 項，失敗 0 項
+```
+
+**⑥ 那 16 項對的是 hosted 的 PostgREST**，不是本機的——ADR-0007 的「client 對 `/rest/v1/*` 零權限」
+這次是在**真的那台**上驗掉的（六支 helper 403／404、表與寫入面全 403、anon 兩條 401）。
+`too_far` 的 `details.distanceM` 實測 129，走的是 hosted 的 PostGIS geography。
+
+### ⑧ 迴歸（2026-08-27 重跑）
+
+`cd api && ./mvnw test` → **174 支綠、0 失敗、0 錯誤**（本次 fresh 的 8 份 surefire 報告加總；
+`ExplainHarness`／`ProbeTest` 兩份是 40 小時前的殘留，已排除，別把總數當 176）。
+本次 session **沒有動任何 Java 程式碼**，這支只是確認契約文件的改動沒有牽動實作。
+
 ## 留給部署當天的三件事
 
 1. `fly apps create hapeetrail` → `fly secrets set …` → `fly deploy --ha=false`（`api/README.md`）。
 2. `npx newman run … -e docs/api/postman/hapeetrail-hosted.postman_environment.json -n 30`
    ——**hosted 環境的 `apikey` 是空的，要先填 publishable key**。
-   ⚠️ **匿名登入有速率限制**：`supabase/config.toml` 的 `anonymous_users = 30`（每小時每 IP），
-   而 30 輪 × 2 次 signup ＝ **60 次**。本機沒擋（60 次 6.5 秒內全過），
-   **hosted 很可能擋**——真被擋就先在 dashboard 把該上限調高，別以為是後端壞了。
+   ⚠️ **匿名登入速率限制已實測會擋**（2026-08-27）：hosted 是 **30 次／小時／IP**，
+   而 30 輪 × 2 次 signup ＝ **60 次** ⇒ 後半段 signup 全部 429、每輪從「匿名登入（B）」整串垮掉
+   （本機不擋，60 次 6.5 秒內全過，所以本機半段看不出來）。
+   **抽乾後要等約一小時才回填得回 30 個**（token bucket）。兩條路：
+   dashboard → Authentication → Rate Limits 把 Anonymous sign-ins 調高，或跑 `-n 15`
+   （＝30 次 signup，恰好卡在上限，跑之前配額必須是滿的）。**別以為是後端壞了。**
 3. `supabase/tests/hosted-smoke.sh iwkuywlrggxolyoiyrui <publishable-key>`（不必給第三個參數）。
+   ⚠️ **第 2 與第 3 點不能連著跑**：`-n 15` 已吃光整桶 30 個配額，煙霧測試自己還要 2 次
+   ⇒ 中間要等回填，或先把上限調高（見第 2 點）。上限調高後兩支才排得進同一小時。
    ⚠️ `api/README.md` 的取 key 指令 `… | grep publishable | awk '{print $4}'` **已經失效**：
    現在那一列的 NAME 欄是 `default` 不是 `publishable`，抓不到值。
    改用 `grep -o 'sb_publishable_[A-Za-z0-9_-]*'`。

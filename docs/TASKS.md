@@ -19,9 +19,16 @@
   **步 6–10 ✅ 完成 2026-08-25/26**：票 05 留便條 `39e44eb`、票 06 分頁 `7d137a9`、
   票 07 探索 `3895128`、票 08 撿起＋收藏 `8dd0372`、票 09 閘門＋TTL＋超越量 `795568c`。
   五支端點全部實作完畢，`cd api && ./mvnw test` **174 支綠**。
-  **下一張：步 11 = 票 11 驗收**（`.scratch/java-rewrite/issues/11-acceptance-newman-smoke.md`），
-  但它要先做票 10 延後的那半段（`fly apps create` → `secrets` → `deploy`，指令已填好在 `api/README.md`）。
-  ⏸️ 等什麼：iOS 夥伴約定的開工日＋他裝好 Tailscale（2026-08-26 裁決：測試期本機容器＋`tailscale serve` 供夥伴串接；Fly 與 Supabase Pro 都延到上線前）。
+  **步 11（票 11）✅ 完成 2026-08-27**：容器連 hosted Supabase、打 tailnet 網址——
+  newman **15 輪 240/240 斷言 0 失敗**、煙霧測試 **33 項全綠**、`./mvnw test` **174 綠**、
+  `check-contract.py` exit 0、`redocly lint` valid。三份契約產出的 `servers`／`base_url`／`$BASE`
+  同步改成 `http://kevinchenmacbook-air.tailac7ba7.ts.net:8080`。
+  票面兩處沒照字面做（**已在票上揭露**）：①`tailscale serve` 的 https 拿不到憑證 ⇒ 改用 tailnet
+  MagicDNS 的 **http** 位址 ②30 輪撞 hosted 匿名登入上限（30 次/小時/IP）⇒ 改 15 輪。
+  兩軸 `/code-review` 各自抓到實質問題並已修（含「憑證只擋 https、DNS 名照樣可用」這個誤判）。
+  **下一張：步 12 = 兩個獨立複核**（`.scratch/java-rewrite/issues/12-*.md`；派兩個 subagent，只給 spec 與 ADR-0011）。
+  ⏸️ 等什麼：iOS 夥伴約定的開工日＋他裝好 Tailscale 加入 tailnet（2026-08-26 裁決：測試期本機容器供夥伴串接；Fly 與 Supabase Pro 都延到上線前）。
+  ⚠️ 通知夥伴的訊息**尚未發出**（tailnet 加入方式＋網址＋apikey 取得方式已備在 `.claude/HANDOFF.local.md`）。
   ⚠️ 票 09 留了一個**待你裁決**的項目：CLAUDE.md 架構原則的「happy path 一句 SQL」
   在加了撿取頻率閘門後已不準（現在是閘門一句＋UPDATE 一句），改 CLAUDE.md 或補 ADR-0011
   都超出票面，未動——詳見 `.scratch/java-rewrite/issues/09-rate-gate-ttl-concurrency.md` 末段。

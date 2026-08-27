@@ -30,7 +30,8 @@ endpoint 的權威規格（path、header、request/response schema、錯誤格�
 - 回應的時間戳格式**固定**為 `YYYY-MM-DDTHH:MM:SS.ffffffZ`——永遠六位小數、永遠 `Z`，
   不因秒數恰為整數而變動位數。
 - 第一階段沒有 Realtime，輪詢是唯一新鮮度機制；數量（收藏數等）由 client 從列表自算。
-- 以下 curl 範例假設：`$BASE`（HapeeTrail 服務，如 `https://hapeetrail.fly.dev`）、
+- 以下 curl 範例假設：`$BASE`（HapeeTrail 服務——**位址的權威來源是
+  `openapi.yaml` 的 `servers`，本檔刻意不重述值**）、
   `$SUPABASE`（Supabase 專案網址）、`$KEY`（Supabase publishable key）、`$TOKEN` 已設定。
 
 ---
