@@ -253,6 +253,23 @@ class NoteService {
 		this.jdbc = jdbc;
 	}
 
+	static boolean hasLoneSurrogate(String s) {
+		for (int i = 0; i < s.length(); i++) {
+			char c = s.charAt(i);
+			if (Character.isHighSurrogate(c)) {
+				if (i + 1 < s.length() && Character.isLowSurrogate(s.charAt(i + 1))) {
+					i++;
+					continue;
+				}
+				return true;
+			}
+			if (Character.isLowSurrogate(c)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/** 依當前位置留下便條，回傳 trim 後的正規 Note。 */
 	Note drop(UUID author, DropRequest request) {
 		if (request == null || request.content() == null) {
@@ -261,6 +278,12 @@ class NoteService {
 		// U+0000 是合法的 JSON 逸出，但 Postgres 的 text 存不下它，而契約的空白字元集也不含它
 		// （剝不掉、也不算空）⇒ 不擋就是一路撞到 INSERT。屬格式錯誤那一桶，不新增契約 token。
 		if (request.content().indexOf(0) >= 0) {
+			throw malformed();
+		}
+		// 孤立代理對（沒配對的 \ud800–\udfff）同樣是合法的 JSON 逸出、不合法的 Unicode 純量值：
+		// 轉 UTF-8 時會被靜默換成 U+FFFD／「?」存進去，使用者送的與存的不同、兩側都沒有訊號。
+		// 與 U+0000 同一桶；配對正確的代理對（emoji、星群平面字）不受影響。
+		if (hasLoneSurrogate(request.content())) {
 			throw malformed();
 		}
 		Coordinate at = located(request.coordinate());

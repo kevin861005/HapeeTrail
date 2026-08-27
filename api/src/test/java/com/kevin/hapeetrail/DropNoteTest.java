@@ -504,7 +504,25 @@ class DropNoteTest extends SupabaseDbTest {
 				// 也不含它（它不是空白）。不擋就是一路撞到 INSERT——任何拿得到 token 的人都能
 				// 無限次把 500 ＋ 堆疊打進日誌。屬格式錯誤那一桶，不新增契約 token。
 				Arguments.of("content 含 U+0000",
-						"{\"content\":\"a\\u0000b\",\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"));
+						"{\"content\":\"a\\u0000b\",\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"),
+				// 孤立代理對（沒配對的 \ud800 / \udc00）是合法的 JSON 逸出，但不是合法的 Unicode
+				// 純量值：轉 UTF-8 時被靜默換成 U+FFFD／「?」存進去，使用者送的與存的不同、
+				// 兩側都沒有訊號。與 U+0000 同一桶：格式錯誤、400 無 code，不新增契約 token。
+				Arguments.of("content 含孤立高代理",
+						"{\"content\":\"a\\ud800b\",\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"),
+				Arguments.of("content 含孤立低代理",
+						"{\"content\":\"a\\udc00b\",\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"));
+	}
+
+	/** 對照組：配對正確的代理對（星群平面字元）照常 200 且原樣保存——孤立代理的閘門不得誤傷 emoji。 */
+	@Test
+	void pairedSurrogatesAreStoredVerbatim() throws Exception {
+		Traveler me = traveler();
+
+		JsonNode note = created(post("/v1/notes", me,
+				"{\"content\":\"a\\ud83d\\ude00b\",\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"));
+
+		assertThat(note.get("content").asString()).isEqualTo("a\ud83d\ude00b");
 	}
 
 	/** 沒有附帶資料的 token 不得有 details 鍵（client 不必分辨「沒有」與「null」）。 */

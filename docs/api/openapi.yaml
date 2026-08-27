@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "4.0.1"
+  version: "4.0.2"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/HapeeTrail
@@ -122,7 +122,9 @@ paths:
                     不會被剝也不會被判為空。
                     **不得含 U+0000**（NUL）：它不是空白（剝不掉、也不算空），
                     但資料庫的文字型別存不下它 → 400 且**沒有 `code`**（型別／格式錯誤），
-                    不是 `content_empty`。詳見 notes.md §4。
+                    不是 `content_empty`。**也不得含孤立代理對**（沒配對的 `\ud800`–`\udfff`
+                    JSON 逸出）：那不是合法的 Unicode 純量值，同樣 400 且沒有 `code`；
+                    配對正確的 emoji／星群平面字元不受影響。詳見 notes.md §4。
                 coordinate:
                   allOf: [{ $ref: "#/components/schemas/Coordinate" }]
                   description: 投放位置

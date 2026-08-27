@@ -57,6 +57,11 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T22** `content` 含孤立代理對改為拒絕（票 14 複核記帳項的契約決策）
+  ✅ 2026-08-27：裁決「拒絕、400 無 `code`」（與 U+0000 同一桶）。`NoteService.hasLoneSurrogate` 一個閘門；
+  red：`a\ud800b`／`a\udc00b` 原回 200 → green 400 無 code；對照組配對 emoji 200 原樣保存（防誤傷）。
+  契約 v4.0.1 → **v4.0.2**（openapi／notes.md §4／Changelog 同步，check-contract 一致）。`./mvnw test` **194 支全綠**。
+  本機容器已重建換新碼並以真 GoTrue token 實打驗證
 - [x] **T21** 舊架構殘留清除（Java 化後的死檔）
   ✅ 2026-08-27：刪 `.github/modernize/`（Copilot 殘骸，根目錄那份）、`docs/api/build-doc.py`（硬編 `/rest/v1/rpc/`，v4 失效且無引用）、
   `docs/HANDOFF.md`（舊架構交接看板，已由 `.claude/HANDOFF.local.md` 取代）；`.scratch/api-contract-v3/` 搬 `docs/tasks/archive/`（T11 已完結）。
