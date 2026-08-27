@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "Trailstamp Notes API",
+    "name": "HapeeTrail Notes API",
     "description": "第一階段便條 API（契約 v4）。搭配 local.postman_environment.json 或 hosted.postman_environment.json 使用。\n\n依資料夾順序執行即為完整流程：旅人 A 留便條（含只給自己看的旅遊紀錄）→ 旅人 B 發現並撿起 → 收藏。\nsignup 請求的 Tests script 會自動把 access_token 寫回 environment，不需手動貼 token。\n\n**兩個 base URL**：業務端點打 {{base_url}}（HapeeTrail 服務）；匿名登入打 {{supabase_url}}（Supabase GoTrue），且只有它需要 apikey。\n\n**錯誤斷言看的是 RFC 9457 problem+json**：HTTP 狀態碼有語意（400/401/403/404/409/422/429），body 的 `code` 是唯一的判斷依據，`details` 是真的物件（v3 的「字串需二次解析」已消失）。\n\n每輪由「匿名登入（A）」的 Pre-request script 隨機挑一個地點，所有座標都由它算出，因此可以反覆執行而不互相干擾——API 沒有刪除便條的路徑，固定座標會讓歷次殘留的便條累積在同一處，滿 20 張後就把本輪的目標便條擠出 nearby 的「最近 20 筆」。\n\nwire format 權威：docs/api/openapi.yaml；語意規則：docs/api/notes.md。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },

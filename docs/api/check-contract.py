@@ -25,7 +25,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent
 SPEC = yaml.safe_load((ROOT / "openapi.yaml").read_text(encoding="utf-8"))
 NOTES = (ROOT / "notes.md").read_text(encoding="utf-8")
-COLLECTION = json.loads((ROOT / "postman" / "trailstamp.postman_collection.json").read_text(encoding="utf-8"))
+COLLECTION = json.loads((ROOT / "postman" / "hapeetrail.postman_collection.json").read_text(encoding="utf-8"))
 
 fails: list[str] = []
 

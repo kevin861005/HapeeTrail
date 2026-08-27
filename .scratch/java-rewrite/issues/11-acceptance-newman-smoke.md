@@ -33,7 +33,7 @@ Supabase **維持 Free**（不升 Pro）——閒置 7 天會暫停，通知夥�
 | 檔 | 是什麼 |
 |---|---|
 | `docs/api/check-contract.py` | **新增**。三份契約產出的交叉比對，`exit 1` 才算數 |
-| `docs/api/postman/trailstamp.postman_collection.json` | 四個錯誤示範的斷言硬化（+10 行） |
+| `docs/api/postman/hapeetrail.postman_collection.json` | 四個錯誤示範的斷言硬化（+10 行） |
 | `supabase/tests/hosted-smoke.sh` | 改寫為 v4／Java 版，六節 33 項 |
 | `docs/api/notes.md` | §10 兩處與實測不符，已改 |
 
@@ -42,8 +42,8 @@ Supabase **維持 Free**（不升 Pro）——閒置 7 天會暫停，通知夥�
 ### ① newman 30 輪（本機服務）
 
 ```
-$ npx newman run docs/api/postman/trailstamp.postman_collection.json \
-    -e docs/api/postman/local.postman_environment.json -n 30
+$ npx newman run docs/api/postman/hapeetrail.postman_collection.json \
+    -e docs/api/postman/hapeetrail-local.postman_environment.json -n 30
 iterations 30／0 failed   requests 480／0   assertions 480／0   duration 6.5s
 ```
 
@@ -147,7 +147,7 @@ $ supabase/tests/hosted-smoke.sh http://127.0.0.1:54321 sb_publishable_… http:
 ## 留給部署當天的三件事
 
 1. `fly apps create hapeetrail` → `fly secrets set …` → `fly deploy --ha=false`（`api/README.md`）。
-2. `npx newman run … -e docs/api/postman/hosted.postman_environment.json -n 30`
+2. `npx newman run … -e docs/api/postman/hapeetrail-hosted.postman_environment.json -n 30`
    ——**hosted 環境的 `apikey` 是空的，要先填 publishable key**。
    ⚠️ **匿名登入有速率限制**：`supabase/config.toml` 的 `anonymous_users = 30`（每小時每 IP），
    而 30 輪 × 2 次 signup ＝ **60 次**。本機沒擋（60 次 6.5 秒內全過），
