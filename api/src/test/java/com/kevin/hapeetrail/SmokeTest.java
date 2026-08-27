@@ -25,9 +25,9 @@ class SmokeTest extends SupabaseDbTest {
 	JdbcClient jdbc;
 
 	/**
-	 * 斷言挑的是**表**的形狀，不是那五支 RPC——切換那天（票 13）RPC 會被 drop，
+	 * 斷言挑的是**表**的形狀，不是那五支 RPC——切換（票 13）已把 RPC 全數 drop，
 	 * 拿它們當錨會變成假紅。`audience`／`color`／`style` 與 `notes_author_private_ix`
-	 * 分別來自第 7、6、12 支 migration，加上套用時的 `ON_ERROR_STOP`，14 支都套到了。
+	 * 分別來自第 7、6、12 支 migration，加上套用時的 `ON_ERROR_STOP`，16 支都套到了。
 	 */
 	@Test
 	void migrationsAreApplied() {
@@ -74,6 +74,26 @@ class SmokeTest extends SupabaseDbTest {
 		assertThat(queryBoolean("select has_schema_privilege('auth', 'usage')")).isFalse();
 		// RLS 不關（notes_select_own 保留休眠），全列放行只給這個角色。
 		assertThat(adminQueryBoolean("select relrowsecurity from pg_class where oid = 'public.notes'::regclass")).isTrue();
+	}
+
+	/**
+	 * 切換（票 13）之後 ADR-0007 的保證只剩一根柱子：**client 角色在 public 什麼都沒有**。
+	 * 這裡逐物件問 pg 目錄，而不是點名幾支已知的函式——會出事的正是「沒人想到的那個新物件」：
+	 * Supabase 在 public schema 設了 default privileges（新表 grant ALL、新函式 grant EXECUTE
+	 * 給 anon／authenticated），所以任何一支忘了顯式 revoke 的 migration 都會靜默開一個洞。
+	 * 煙霧測試的根路徑清單那條擋不住這個——hosted 的 PostgREST 對 client 根本不給清單。
+	 */
+	@Test
+	void clientRolesOwnNothingInPublic() {
+		// 表／view／sequence：任何一種權限都不該有
+		assertThat(adminQueryBoolean("select not exists (select from information_schema.role_table_grants"
+				+ " where table_schema = 'public' and grantee in ('anon', 'authenticated'))")).isTrue();
+		// 函式：切換後 public 應該一支都不剩，遑論授權給 client
+		assertThat(adminQueryBoolean("select count(*) = 0 from pg_proc p"
+				+ " join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'")).isTrue();
+		// schema 本身的 CREATE——拿得到就能自己造一個帶 default privileges 的物件
+		assertThat(adminQueryBoolean("select bool_and(not has_schema_privilege(r, 'public', 'create'))"
+				+ " from unnest(array['anon', 'authenticated']) r")).isTrue();
 	}
 
 	private Boolean queryBoolean(String sql) {

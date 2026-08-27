@@ -198,47 +198,69 @@ else
 fi
 
 echo
-echo "⑥ Supabase 那一側：client 對資料表與內部 helper 零權限（ADR-0007）"
-# 先驗「無論切不切換都必須不可達」的東西，再驗過渡期五支 RPC 的狀態。
+echo "⑥ Supabase 那一側：client 角色對資料表與 public schema 的函式零權限（ADR-0007 在 ADR-0011 下延續）"
+# 切換（票 13，migration 20260827000000）之後：五支契約 RPC 與六支 helper 全數 drop、
+# 資料表對 client 早已零權限 ⇒ `/rest/v1/*` 對 client 只剩 401／403／404。
+# 這一段是**正面斷言**：哪天有人為了救火把 RPC 復活、或 default privileges 靜默把新物件
+# 授權回 anon／authenticated，要在這裡當場紅，而不是等外洩。
+#
+# ⚠️ **每條都斷言「恰好那一個碼」，不收 401／403／404 任一皆可**。理由是這一段最貴的
+# 失敗模式是假綠：
+#   * 收 401 ⇒ TOKEN_A 哪天失效（過期、apikey 與 Bearer 搞混、GoTrue 改行為），整段會
+#     因為「每一條都 401」而全綠，卻一次都沒真的碰到角色權限。
+#   * 函式那組收 403 ⇒ 「函式被重建、只是把 EXECUTE revoke 掉」也會過，而那正是
+#     migration 明講不接受的狀態（「為什麼是 drop 而不是 revoke」）。**只有 404 證明它不在了。**
+expect() {  # expect <期望碼> <實得碼> <說明>
+  if [ "$1" = "$2" ]; then ok "$3 → $2"
+  else bad "$3 → $2（預期 $1）" "$(head -c 200 "$BODY")"; fi
+}
 SBAUTH=(-H "apikey: $KEY" -H "Authorization: Bearer $TOKEN_A")
-for q in "notes?select=*" "notes?select=id,picked_up_by"; do
-  c=$(http "$SB/rest/v1/$q" "${SBAUTH[@]}")
-  [ "$c" = "403" ] && ok "GET /rest/v1/$q → 403" \
-    || bad "GET /rest/v1/$q → ${c}（預期 403）" "$(head -c 200 "$BODY")"
+PROBE_ID="${NOTE_ID:-00000000-0000-0000-0000-000000000000}"
+# 表還在（schema 不動），所以走得到認證 ⇒ 有效 token ＋ 無權限 ＝ 恰好 403
+for q in "notes" "notes?select=*" "notes?select=id,picked_up_by" "notes?id=eq.$PROBE_ID"; do
+  expect 403 "$(http "$SB/rest/v1/$q" "${SBAUTH[@]}")" "GET /rest/v1/${q}（表不可達）"
 done
-c=$(http -X POST "$SB/rest/v1/notes" "${SBAUTH[@]}" -H 'Content-Type: application/json' -d '{"content":"x"}')
-{ [ "$c" = "403" ] || [ "$c" = "401" ]; } && ok "POST /rest/v1/notes（寫入面）→ ${c}" \
-  || bad "POST /rest/v1/notes → ${c}（預期 401 或 403）" "$(head -c 200 "$BODY")"
-for f in as_note_wire as_wire_ts as_cursor parse_cursor distance_m note_ttl; do
-  c=$(http -X POST "$SB/rest/v1/rpc/$f" "${SBAUTH[@]}" -H 'Content-Type: application/json' -d '{}')
-  # 404 = PostgREST 找不到符合簽名的函式（送 {} 本來就不符）；403 = 有函式但無權限。兩者都不算外洩
-  { [ "$c" = "403" ] || [ "$c" = "404" ]; } && ok "rpc/$f → ${c}（不可用）" \
-    || bad "rpc/$f → ${c}（預期 403 或 404）" "$(head -c 200 "$BODY")"
+# ⚠️ PATCH／DELETE 一定要帶 filter：PostgREST 對無 WHERE 的整表寫入先回 400
+# 「DELETE requires a WHERE clause」——那是**請求形狀**被擋，權限檢查根本沒跑到，
+# 拿它當「不可達」的證據是假綠。帶了 filter 才會走到 42501 permission denied。
+expect 403 "$(http -X POST "$SB/rest/v1/notes" "${SBAUTH[@]}" \
+  -H 'Content-Type: application/json' -d '{"content":"x"}')" "POST /rest/v1/notes（寫入面）"
+for m in PATCH DELETE; do
+  expect 403 "$(http -X "$m" "$SB/rest/v1/notes?id=eq.$PROBE_ID" "${SBAUTH[@]}" \
+    -H 'Content-Type: application/json' -d '{"content":"x"}')" "$m /rest/v1/notes?id=eq.…（寫入面）"
 done
-# ⚠️ 過渡期：v3.3 的五支契約 RPC 在切換日前仍然活著。這裡**正面斷言它們還在**——
-# 提早被收掉要在這裡發現，不是等 iOS 回報。**票 13 把這一段整組翻面**：改成斷言
-# 五支全部 401／403／404。
-echo "  · 過渡期（票 13 翻面）：v3.3 五支契約 RPC 仍可達"
-for spec in "my_notes:{\"p_limit\":1}" "my_collection:{\"p_limit\":1}" \
-            "nearby_notes:{\"p_lat\":$LAT,\"p_lng\":$LNG}" \
-            "drop_note:{\"p_content\":\"rpc smoke\",\"p_lat\":$LAT,\"p_lng\":$LNG}"; do
-  f=${spec%%:*}
-  c=$(http -X POST "$SB/rest/v1/rpc/$f" "${SBAUTH[@]}" -H 'Content-Type: application/json' -d "${spec#*:}")
-  [ "$c" = "200" ] && ok "rpc/$f → 200（仍活著）" \
-    || bad "rpc/$f → ${c}（切換前預期 200）" "$(head -c 200 "$BODY")"
+# 11 支函式：**恰好 404**（PGRST202，schema cache 裡找不到）。送 {} 而簽名不符也會是 404，
+# 所以這一條不區分「函式在但參數不對」與「函式已消失」——下一條的根路徑清單負責那一半。
+for f in drop_note nearby_notes pickup_note my_notes my_collection \
+         as_note_wire as_wire_ts as_cursor parse_cursor distance_m note_ttl; do
+  expect 404 "$(http -X POST "$SB/rest/v1/rpc/$f" "${SBAUTH[@]}" \
+    -H 'Content-Type: application/json' -d '{}')" "POST rpc/${f}（函式已不存在）"
 done
-# pickup_note 沒有無害的成功呼叫，改用「業務錯誤 ≠ 權限錯誤」判定：拿隨機 uuid 打，
-# 回 400 P0001 note_not_found 就證明函式在、且呼叫者有 EXECUTE。
-c=$(http -X POST "$SB/rest/v1/rpc/pickup_note" "${SBAUTH[@]}" -H 'Content-Type: application/json' \
-      -d "{\"p_note_id\":\"00000000-0000-0000-0000-000000000000\",\"p_lat\":$LAT,\"p_lng\":$LNG}")
-{ [ "$c" = "400" ] && [ "$(jget message)" = "note_not_found" ]; } \
-  && ok "rpc/pickup_note → 400 note_not_found（仍活著；業務錯誤而非權限錯誤）" \
-  || bad "rpc/pickup_note → ${c}/$(jget message)（切換前預期 400/note_not_found）" "$(head -c 200 "$BODY")"
-
-for p in "rest/v1/notes" "rest/v1/rpc/my_notes"; do
-  c=$(http "$SB/$p" -H "apikey: $KEY")
-  [ "$c" = "401" ] && ok "anon（未登入）/$p → 401" \
-    || bad "anon /$p → ${c}（預期 401）" "$(head -c 200 "$BODY")"
+# 根路徑清單：PostgREST 只列出呼叫者權限看得到的東西。
+# ⚠️ **這一條在 hosted 上證得比看起來少**：實測 Supabase 對 client 直接回 401，
+# 連 OpenAPI 清單都不給 ⇒ 它擋掉了「清單洩漏」，但**沒有**證明 authenticated 碰不到
+# 任何物件。「沒有我沒想到的東西露得出來」那半由 `SmokeTest.clientRolesOwnNothingInPublic`
+# 以 pg 目錄逐物件斷言（每次 `mvn test` 都跑，且是精確的），不靠這裡。
+c=$(http "$SB/rest/v1/" "${SBAUTH[@]}")
+if [ "$c" = "200" ]; then
+  if leftover=$(python3 -c "
+import json
+d = json.load(open('$BODY'))
+print(','.join(sorted(k for k in d.get('paths', {}) if k != '/')))
+" 2>/dev/null) && [ -z "$leftover" ]; then
+    ok "GET /rest/v1/ → 200，清單為空"
+  else
+    bad "GET /rest/v1/ 的清單不是空的" "仍列出：${leftover:-<解析失敗>}"
+  fi
+else
+  expect 401 "$c" "GET /rest/v1/（清單對 client 不開放）"
+fi
+# anon（未登入，只帶 apikey）。**用 POST 打 rpc**：PostgREST 對 VOLATILE 函式本來就拒絕 GET，
+# 拿 GET 的 404 當證據等於在驗 PostgREST 的方法限制，不是在驗函式已消失。
+expect 401 "$(http "$SB/rest/v1/notes" -H "apikey: $KEY")" "anon（未登入）GET /rest/v1/notes"
+for f in my_notes drop_note; do
+  expect 404 "$(http -X POST "$SB/rest/v1/rpc/$f" -H "apikey: $KEY" \
+    -H 'Content-Type: application/json' -d '{}')" "anon（未登入）POST rpc/$f"
 done
 
 echo

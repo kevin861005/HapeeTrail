@@ -7,12 +7,35 @@
 （無）
 
 ## 待辦
-- [ ] **T19** 後端全換 Java／Spring Boot（依 **ADR-0011**；spec：`.scratch/java-rewrite/spec.md`、tickets：`.scratch/java-rewrite/issues/01–13`，✅ 2026-08-25 規劃完成；從 01／02／03 任一張開工）
+- [ ] **T20** 產品正名 Trailstamp → HapeeTrail：CLAUDE.md、openapi 標題、`supabase/config.toml` project_id、
+  ADR／HANDOFF 標題、`docs/index.html`（`CONTEXT.md` 已定案）
+- [ ] **T23** 上線前的基礎設施收尾（T19 之後；沒有死線，夥伴串接期間服務跑在 Kevin 的 Mac 上）
+  ① 綁 Fly 付款方式 → 票 10 剩餘 6 項（`fly apps create hapeetrail` → `fly secrets set` → `fly deploy --ha=false`
+  → 真 GoTrue token 打 Fly 200 → `hosted-smoke.sh` 對 Fly 全綠）② 升 Supabase Pro（Free 閒置 7 天會暫停）
+  ③ 契約三檔的 `servers`／`base_url` 從 tailnet MagicDNS 換成 Fly 網址 ④ 通知夥伴改 base URL。
+  施工細節見 `docs/tasks/archive/java-rewrite/issues/10-first-deploy-fly.md`（票 10 的未完成半段）
+- [ ] **T24** public schema 的 default privileges 收緊（ADR-0007 在新架構下的唯一靜默破口）
+  Supabase 對 `public` 設了 default privileges：**新建的表預設 grant ALL、新建的函式預設 grant EXECUTE
+  給 anon／authenticated**（`docker exec … psql` 實測：在交易內 `create table public.oops_t(i int)`
+  之後，`role_table_grants` 立刻出現 anon／authenticated 兩列）。切換後 client 角色零權限是
+  ADR-0007 的唯一柱子，這條 default privilege 讓任何一支忘了顯式 revoke 的 migration 靜默開一個洞。
+  根治：`alter default privileges in schema public revoke ...`——會讓往後每支新物件都必須顯式授權，
+  是**專案級慣例變更**，所以獨立成票、不夾在切換裡做。
+  目前的防線：`SmokeTest.clientRolesOwnNothingInPublic` 逐物件問 pg 目錄（每次 `mvn test` 都跑，
+  新物件一冒出來就紅）。**先討論再動**（CLAUDE.md Ticket 紀律）
+- [ ] **T3** UGC 檢舉機制（App Store 審查前必須；T19 之後在 Java 實作，不再寫 `report_note` RPC）
+
+## 已完成
+
+（30 天內；更舊直接刪，git 歷史即檔案）
+
+- [x] **T19** 後端全換 Java／Spring Boot（依 **ADR-0011**）
+  ✅ 2026-08-27 全部 13 張票完成並切換上線。spec 與施工票已歸檔：`docs/tasks/archive/java-rewrite/`（`spec.md`、`issues/01–14`、`README.md` 施工順序表）
   範圍：`hapeetrail/` → `api/`、清 Copilot 殘骸、`hapeetrail_api` 最小權限角色、JdbcClient 實作五支端點、
   契約 v4（openapi／notes.md／postman 三份同步）、Testcontainers 測試（搬 `notes.test.sql` 情境清單）、
   Fly.io `nrt` 部署、hosted-smoke 改打 Spring、兩個獨立複核、一刀切 drop RPC；**CLAUDE.md 架構原則同步改**
   **第一批 ticket 順序**：CLAUDE.md 改原則 → v4 openapi 先出交夥伴（contract-first，他尚未開工）→ 才動 Java
-  進度（施工順序表：`.scratch/java-rewrite/README.md`）：步 0–4 ✅ 完成（`cabc523`）；
+  進度（施工順序表：`docs/tasks/archive/java-rewrite/README.md`）：步 0–4 ✅ 完成（`cabc523`）；
   **步 5（票 10）部分完成 `7c54f9d`**——容器／fly.toml／部署 runbook 做完並本機驗過，
   **上真機那半段刻意延後到步 11 前**（Fly 無免費方案 ≈US$5.7/月，iOS 夥伴尚未開工，
   票 10 要證的三件事已從本機證掉兩件）。
@@ -43,19 +66,31 @@
   真 GoTrue token 實測 **ES256 且 `iss` 與設定值逐字相同**（S1／S2 沒誤擋真 token）、
   四種改了行為的請求對真 hosted 逐一確認 400 無 `code`，對照組未誤傷。
   commit `26dd65e`（程式＋文件＋票）。
-  **下一張：步 13 = 切換**（切換日當天才開）。
   ✅ 2026-08-27 夥伴已收到串接包（tailnet 網址、publishable key、ATS 注意事項、文件連結），開始串接。
-  ⚠️ 通知夥伴的訊息**尚未發出**（tailnet 加入方式＋網址＋apikey 取得方式已備在 `.claude/HANDOFF.local.md`）。
-  ⚠️ 票 09 留了一個**待你裁決**的項目：CLAUDE.md 架構原則的「happy path 一句 SQL」
-  在加了撿取頻率閘門後已不準（現在是閘門一句＋UPDATE 一句），改 CLAUDE.md 或補 ADR-0011
-  都超出票面，未動——詳見 `.scratch/java-rewrite/issues/09-rate-gate-ttl-concurrency.md` 末段。
-- [ ] **T20** 產品正名 Trailstamp → HapeeTrail：CLAUDE.md、openapi 標題、`supabase/config.toml` project_id、
-  ADR／HANDOFF 標題、`docs/index.html`（`CONTEXT.md` 已定案）
-- [ ] **T3** UGC 檢舉機制（App Store 審查前必須；T19 之後在 Java 實作，不再寫 `report_note` RPC）
-
-## 已完成
-
-（30 天內；更舊直接刪，git 歷史即檔案）
+  ✅ 票 09 留的裁決 2026-08-26 已結（CLAUDE.md 改為「閘門一句＋UPDATE 一句」）。
+  **步 13（票 13）✅ 完成 2026-08-27 —— 切換，T19 到此收尾**：
+  migration `supabase/migrations/20260827000000_cutover_drop_rpc.sql` 已 `db push` 到 hosted，
+  **drop 11 支函式**（5 支契約 RPC ＋ 6 支 helper，清單以實際 `pg_proc` 為準）並改寫 `notes` 表註解。
+  「收回 client 殘餘 EXECUTE」不必另寫——drop 連同 grant 一起消失（切換前實測：`authenticated`
+  只在 5 支 RPC 上有 EXECUTE、`anon` 一支都沒有、兩者對 `notes` 零表權限）。
+  **`./mvnw test` 195 綠**（Testcontainers 從零套 16 支 migration ⇒ 證明服務不依賴任何被 drop 的函式）。
+  `hosted-smoke.sh` ⑥ **從「斷言 RPC 還活著」翻成正面斷言全部不可達**：4 種讀取變體＋3 種寫入面、
+  11 支函式路徑、根路徑清單、anon 三條，對真 hosted **39 項全綠**（原 33 項）；
+  **每條斷言恰好一個碼**（表 403、函式 404、anon 表 401、anon 函式 404），不收「401／403／404 任一皆可」
+  ——收 401 會在 token 失效時整段集體假綠，函式那組收 403 則等於接受「函式重建、只 revoke EXECUTE」。
+  新增 `SmokeTest.clientRolesOwnNothingInPublic`（第 195 支）：逐物件問 pg 目錄，
+  接手「涵蓋我沒想到的新物件」那半——hosted 的根路徑清單對 client 直接 401，證不到這件事。
+  newman 對容器（連 hosted）NEWMAN_EVIDENCE。
+  `supabase/tests/notes.test.sql` 退役（刪除），**14 列情境對照表**（每段搬到哪張票／哪個 Java 測試）記進票 13。
+  `docs/api/notes.md` §10 與 CLAUDE.md 的「施工中」聲明改為 as-built。
+  施工檔 `.scratch/java-rewrite/` 搬 `docs/tasks/archive/java-rewrite/`。
+  **翻面時抓到兩個會假綠的斷言**（都已修並實測）：①無 filter 的 `PATCH`／`DELETE /rest/v1/notes`
+  回 400「requires a WHERE clause」——請求形狀被擋、權限檢查根本沒跑到；帶 `?id=eq.…` 才走到 403 `42501`。
+  ②切換後 anon 打 `/rest/v1/rpc/*` 是 **404**（PostgREST 找不到路由，早於認證）而非 401——
+  寫死 401 等於押注在「認證先於路由解析」這個內部順序上。
+  ⚠️ **留下的洞（已記進票 13，值得單獨決定）**：Supabase 在 public schema 的 default privileges
+  仍會把新建物件自動授權給 anon／authenticated；切換後 ADR-0007 的保證全靠「client 角色零權限」，
+  這是它唯一的靜默破口。目前由煙霧測試的根路徑清單斷言把關（新物件一露出就紅）。
 
 - [x] **T22** `content` 含孤立代理對改為拒絕（票 14 複核記帳項的契約決策）
   ✅ 2026-08-27：裁決「拒絕、400 無 `code`」（與 U+0000 同一桶）。`NoteService.hasLoneSurrogate` 一個閘門；

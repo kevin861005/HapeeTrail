@@ -46,9 +46,9 @@ docker run --rm -p 8080:8080 \
 
 ## 部署到 Fly.io（東京 `nrt`）
 
-> **狀態（2026-08-25）：刻意延後。** 步驟 1–3 已完成、flyctl 已安裝登入；
-> 只剩 `fly` 那三步，等 iOS 夥伴約定開工日前幾天再做。理由與已查證的事實見
-> `.scratch/java-rewrite/issues/10-first-deploy-fly.md`。Fly 無免費方案，
+> **狀態（2026-08-27）：刻意延後，已立成 T23。** 步驟 1–3 已完成、flyctl 已安裝登入；
+> 只剩 `fly` 那三步（綁付款方式之後才做）。理由與已查證的事實見
+> `docs/tasks/archive/java-rewrite/issues/10-first-deploy-fly.md`。Fly 無免費方案，
 > 常駐 shared-cpu-1x／1GB 約 US$5.70／月，沒人用時開著是純燒錢。
 
 ### 一次性設定

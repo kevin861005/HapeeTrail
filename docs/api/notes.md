@@ -331,11 +331,11 @@ curl -G "$BASE/v1/me/notes" -H "Authorization: Bearer $TOKEN" \
 ## 10. 契約外路徑（讀了也別依賴）
 
 **資料進出只有一條路：HapeeTrail 服務。** 業務規則全部在服務裡，資料庫只由服務以一個
-最小權限的角色存取；**Supabase 專案的 `/rest/v1/*` 對 client 角色完全不可達**
-（表與任何 `select=` 變體、寫入面、以及所有內部 helper 函式，一律 401／403／404；
-**v3.3 的五支契約 RPC 是切換日前的唯一例外**，見本節末的過渡期聲明），
-Supabase 那一側對 client 只剩 `/auth/v1/*`。因此 `author_id`／`picked_up_by`／`location`
-這些不上 wire 的欄位**沒有任何 client 路徑讀得到**。
+最小權限的角色存取；**Supabase 專案的 `/rest/v1/*` 對 client 角色完全不可達**——
+表與任何 `select=` 變體、寫入面（POST／PATCH／DELETE）、以及 `/rest/v1/rpc/*` 底下的
+每一支函式，一律 401／403／404，`GET /rest/v1/` 的清單是空的。Supabase 那一側對 client
+只剩 `/auth/v1/*`。因此 `author_id`／`picked_up_by`／`location` 這些不上 wire 的欄位
+**沒有任何 client 路徑讀得到**。
 
 - **服務只暴露契約列出的路徑**：五支業務端點 ＋ 不需認證的 `GET /actuator/health`
   （只回健康狀態，不揭露任何業務資料；實際 body 目前是
@@ -348,9 +348,10 @@ Supabase 那一側對 client 只剩 `/auth/v1/*`。因此 `author_id`／`picked_
   游標不含座標，也不授予任何權限。
 - **伺服器日誌不記座標與便條內容**：只記路徑、狀態碼、耗時、錯誤 `code`；請求 body 永不落日誌。
 
-> **過渡期的誠實聲明**：切換日之前，舊的 `POST /rest/v1/rpc/*`（v3.3 的五支 RPC）在
-> Supabase 上仍然活著。它們**不屬於 v4 契約**，會在切換當天連同 PostgREST 的權限一起
-> 關掉。請不要對它們開工，也不要留任何 fallback。
+> **v3.3 的五支 RPC 已於 2026-08-27 從資料庫移除**（migration
+> `20260827000000_cutover_drop_rpc.sql`，連同六支內部 helper 一併 drop）。
+> `POST /rest/v1/rpc/{drop_note,nearby_notes,pickup_note,my_notes,my_collection}`
+> 此後一律 404。它們從來不屬於 v4 契約，也沒有 fallback 可留。
 
 ## 11. Changelog
 

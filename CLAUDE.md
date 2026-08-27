@@ -6,9 +6,6 @@
 
 ## 技術棧
 
-> 本節與「架構原則」描述 ADR-0011 的目標架構。Java 版施工中（T19），
-> 驗收通過前線上仍是 Supabase RPC 版。
-
 - 後端：Spring Boot 4.1／Java 21 服務（Maven，repo 內 `api/`），
   容器化部署於東京、常駐不縮零
 - 資料庫：Supabase 代管 Postgres 17 + PostGIS，region：東京 ap-northeast-1
@@ -45,8 +42,8 @@
 ## 文件地圖
 - 產品路線圖與各階段範圍：docs/roadmap.md
 - 重大決策紀錄：docs/adr/（編號遞增）；後端 Java 化見 ADR-0011
-- 後端全換 Java 的 spec 與施工票：.scratch/java-rewrite/
-  （spec.md、issues/、README.md 施工順序表）
+- 後端全換 Java（T19，2026-08-27 完工切換）的 spec 與施工票已歸檔：
+  docs/tasks/archive/java-rewrite/（spec.md、issues/、README.md 施工順序表）
 
 ## 開發守則
 
