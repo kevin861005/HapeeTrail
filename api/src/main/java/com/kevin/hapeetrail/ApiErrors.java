@@ -1,9 +1,11 @@
 package com.kevin.hapeetrail;
 
+import java.sql.SQLException;
 import java.util.Map;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -22,6 +24,9 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 @RestControllerAdvice
 class ApiErrors extends ResponseEntityExceptionHandler {
 
+	/** PostgreSQL 的 foreign_key_violation。 */
+	private static final String FOREIGN_KEY_VIOLATION = "23503";
+
 	/**
 	 * 業務錯誤：帶凍結的 {@code code}，有附帶資料時才有 {@code details}。
 	 * {@code code} 為 null ＝ 缺必填欄位那一類，走與框架錯誤相同的無 code 形狀。
@@ -38,6 +43,34 @@ class ApiErrors extends ResponseEntityExceptionHandler {
 			response.header(HttpHeaders.RETRY_AFTER, retryAfterS.toString());
 		}
 		return response.body(new Problem(ex.status().value(), title, code, ex.details()));
+	}
+
+	/**
+	 * {@code notes} 上只有 {@code author_id} 與 {@code picked_up_by} 兩支 FK，都指向
+	 * {@code auth.users} ⇒ {@code 23503} 的唯一語意就是「呼叫者的身分已不存在」
+	 * （帳號刪除、token 尚未過期）。那是身分問題不是伺服器故障：回 401 讓 iOS 走刷新流程，
+	 * 500 只會讓它一直重試。其餘完整性錯誤不是身分問題，維持原樣往外拋。
+	 */
+	@ExceptionHandler(DataIntegrityViolationException.class)
+	ResponseEntity<Problem> identityGone(DataIntegrityViolationException ex) {
+		if (ex.getMostSpecificCause() instanceof SQLException sql && FOREIGN_KEY_VIOLATION.equals(sql.getSQLState())) {
+			return business(new ApiException(HttpStatus.UNAUTHORIZED, "not_authenticated", null));
+		}
+		return unexpected(ex);
+	}
+
+	/**
+	 * 信封的最後一道：沒人接的例外原本會掉出這個 advice、回 Spring 自己的 500 錯誤頁
+	 * （{@code {"timestamp":…,"error":…,"path":…}}）——那個形狀沒有 {@code type}、沒有
+	 * {@code code}，「有 code 才是業務錯誤」在 500 上就不成立，而且它會把路徑回述給 client。
+	 *
+	 * <p>ERROR 只記例外本身（訊息與堆疊），不記請求：body 裡有座標與便條內容。
+	 */
+	@ExceptionHandler(Exception.class)
+	ResponseEntity<Problem> unexpected(Exception ex) {
+		this.logger.error("未預期的例外", ex);
+		HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
+		return respond(status).body(new Problem(status.value(), status.getReasonPhrase(), null, null));
 	}
 
 	/**

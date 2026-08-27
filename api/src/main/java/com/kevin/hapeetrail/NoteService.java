@@ -258,6 +258,11 @@ class NoteService {
 		if (request == null || request.content() == null) {
 			throw malformed();
 		}
+		// U+0000 是合法的 JSON 逸出，但 Postgres 的 text 存不下它，而契約的空白字元集也不含它
+		// （剝不掉、也不算空）⇒ 不擋就是一路撞到 INSERT。屬格式錯誤那一桶，不新增契約 token。
+		if (request.content().indexOf(0) >= 0) {
+			throw malformed();
+		}
 		Coordinate at = located(request.coordinate());
 		// 順序不能反：上限量的是 trim **之後**的內容。
 		String content = EDGE_WHITESPACE.matcher(request.content()).replaceAll("");

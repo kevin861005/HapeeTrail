@@ -26,8 +26,20 @@
   票面兩處沒照字面做（**已在票上揭露**）：①`tailscale serve` 的 https 拿不到憑證 ⇒ 改用 tailnet
   MagicDNS 的 **http** 位址 ②30 輪撞 hosted 匿名登入上限（30 次/小時/IP）⇒ 改 15 輪。
   兩軸 `/code-review` 各自抓到實質問題並已修（含「憑證只擋 https、DNS 名照樣可用」這個誤判）。
-  **下一張：步 12 = 兩個獨立複核**（`.scratch/java-rewrite/issues/12-*.md`；派兩個 subagent，只給 spec 與 ADR-0011）。
-  ✅ 2026-08-27 夥伴已收到串接包（tailnet 網址、publishable key、ATS 注意事項、文件連結），開始串接。下一張：步 12 兩個獨立複核（不依賴夥伴進度）。
+  **步 12（票 12）✅ 完成 2026-08-27**：兩個獨立 subagent（安全／正確性），只給 spec 與 ADR-0011，
+  禁讀施工票與 HANDOFF。結果 **0 CRITICAL、2 MAJOR、13 MINOR**——授權隔離、最小權限、
+  私人／過期／不存在不可區分、限流無距離 oracle、日誌無座標與內容、併發恰 1 贏、TTL 三處一致、
+  游標平手、時間戳六位小數全部以可執行證據通過。結論與處置表記進票 12 文末。
+  **步 12.5（票 14）✅ 完成 2026-08-27**：兩條 MAJOR（`ApiErrors` 無 catch-all ⇒ 500 逃出
+  problem+json；`JsonConfig` 漏 `Textual` ⇒ `content:123` 回 200）＋ JWT 的 `iss`／缺 `exp`，
+  全走 TDD red→green。`cd api && ./mvnw test` **189 綠**（基準 174＋15）；
+  獨立驗收「有條件通過」（9 MINOR、零迴歸、突變測試證明新測試實心），其中 6 條已收、3 條記帳。
+  契約三檔同步升 **v4.0.1**（`check-contract.py` exit 0、`redocly lint` valid）——
+  ⚠️ contract pack 已於 `9e40191` 交付夥伴，`content:123` 與 `audience:5` 的錯誤**類別**變了，
+  他的 error switch 會走到不同分支，**需要通知他重看 §11**。
+  新增必填環境變數 `HAPEETRAIL_JWT_ISSUER`（已進 `fly.toml` `[env]` 與 `api/README.md`）。
+  **下一張：步 13 = 切換**（切換日當天才開；開工前先補跑 newman／hosted 煙霧，那是票 14 未驗的一格）。
+  ✅ 2026-08-27 夥伴已收到串接包（tailnet 網址、publishable key、ATS 注意事項、文件連結），開始串接。
   ⚠️ 通知夥伴的訊息**尚未發出**（tailnet 加入方式＋網址＋apikey 取得方式已備在 `.claude/HANDOFF.local.md`）。
   ⚠️ 票 09 留了一個**待你裁決**的項目：CLAUDE.md 架構原則的「happy path 一句 SQL」
   在加了撿取頻率閘門後已不準（現在是閘門一句＋UPDATE 一句），改 CLAUDE.md 或補 ADR-0011

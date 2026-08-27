@@ -97,6 +97,7 @@ abstract class SupabaseDbTest {
 		registry.add("spring.datasource.username", () -> API_ROLE);
 		registry.add("spring.datasource.password", () -> API_PASSWORD);
 		registry.add("spring.security.oauth2.resourceserver.jwt.public-key-location", () -> "file:" + PUBLIC_KEY);
+		registry.add("hapeetrail.jwt.issuer", () -> TestJwt.ISSUER);
 	}
 
 }

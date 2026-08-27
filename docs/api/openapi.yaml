@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "4.0.0"
+  version: "4.0.1"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/HapeeTrail
@@ -119,7 +119,10 @@ paths:
                     字元集＝Unicode White_Space ＋ U+001C–U+001F（後者是多涵蓋的
                     C0 資訊分隔符，實務上打不出來但與標準 whitespace 集有差異）。
                     格式字元（U+200B–200D、U+2060、U+FEFF、U+180E）不算空白，
-                    不會被剝也不會被判為空。詳見 notes.md §4。
+                    不會被剝也不會被判為空。
+                    **不得含 U+0000**（NUL）：它不是空白（剝不掉、也不算空），
+                    但資料庫的文字型別存不下它 → 400 且**沒有 `code`**（型別／格式錯誤），
+                    不是 `content_empty`。詳見 notes.md §4。
                 coordinate:
                   allOf: [{ $ref: "#/components/schemas/Coordinate" }]
                   description: 投放位置
@@ -477,17 +480,18 @@ components:
   responses:
     Unauthorized:
       description: |
-        `not_authenticated`——token 缺失、過期、簽章不符、缺 `sub`、`aud` 不符，
-        五種變形同一個答案。**401 一律代表 session 問題**：走刷新流程，
-        不需要（也不應該）比對 body。
+        `not_authenticated`——token 缺失、過期、簽章不符、`sub` 缺失或不是 UUID、
+        `aud` 不符、`iss` 不符或缺失、缺 `exp`，以及 token 簽得過但該使用者已不存在
+        （帳號已刪、token 尚未過期）。全部同一個答案。
+        **401 一律代表 session 問題**：走刷新流程，不需要（也不應該）比對 body。
       content:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
           example:
             type: about:blank
-            title: not_authenticated
             status: 401
+            title: not_authenticated
             code: not_authenticated
     ListBadRequest:
       description: |

@@ -70,8 +70,9 @@ curl -X POST "$SUPABASE/auth/v1/signup" -H "apikey: $KEY" \
    path 上的 id 不是合法 uuid）是 **400 沒有 `code`**；其餘（網路錯誤、平台層錯誤、5xx）
    走通用重試。這是 v3「第二層閘門」的對應物——規則沒變，只是判準從
    「`code == "P0001"`」變成「有沒有 `code`」。
-3. **401 一律代表 session 問題**（token 缺失、過期、簽章不符、缺 `sub`、`aud` 不符，
-   五種同一個答案），走刷新流程；**不需要、也不應該**比對 body。
+3. **401 一律代表 session 問題**（token 缺失、過期、簽章不符、`sub` 缺失或不是 UUID、
+   `aud` 不符、`iss` 不符或缺失、缺 `exp`，以及 token 簽得過但該使用者已不存在——
+   全部同一個答案），走刷新流程；**不需要、也不應該**比對 body。
 
 - `type` 目前恆為 `about:blank`，`title` 是給人看的摘要（業務錯誤時等於 `code`）。
   **兩者都不是判斷依據**，不得對它們做字串比對。
@@ -162,6 +163,8 @@ curl -X POST "$BASE/v1/notes" \
   code point 計數，否則會放行伺服器拒絕的內容。
 - **先 trim 再計數**，順序固定。只剝字串**頭尾**——多行內容中間那幾行的縮排是內容的
   一部分，不會被動到。trim 後為空 → `content_empty`。
+- ⚠️ **`content` 不得含 U+0000**（NUL）。它不是空白（trim 不掉、也不算空），但資料庫的
+  文字型別存不下它 ⇒ **400 且沒有 `code`**（格式錯誤，見 §2），不是 `content_empty`。
 - **trim 的字元集**＝Unicode 的 White_Space（半角空白、tab、換行、CR、NBSP、
   全形空白 U+3000、各種 en/em space、U+2028/2029…）**再加上 U+001C–U+001F**
   這四個 C0 資訊分隔符。前者與各平台慣用的「whitespaces and newlines」一致；
@@ -347,6 +350,22 @@ Supabase 那一側對 client 只剩 `/auth/v1/*`。因此 `author_id`／`picked_
 > 關掉。請不要對它們開工，也不要留任何 fallback。
 
 ## 11. Changelog
+
+- 2026-08-27 **v4.0.1**（獨立複核後的修正，見 ADR-0011 的施工票 14）：
+  **兩處請求會從「業務錯誤」改判為「型別錯誤」**——判準沒變（有沒有 `code`），
+  但這兩種請求落在哪一邊變了，`code` 的 switch 會走到不同分支：
+  - **字串欄位給非字串**（`content: 123`、`audience: 5`、`audience: true`…）
+    原本會被靜默轉成字串：`content` 直接存成 `"123"` 回 **200**，
+    `audience` 則走到白名單比對回 `invalid_audience`（**有 `code`**）。
+    現在兩者都是 **400 且沒有 `code`**，與「數值欄位給字串」對稱（§2）。
+  - **`content` 含 U+0000** 原本會撞到儲存層而回 500；現在是
+    **400 且沒有 `code`**（§4）。
+
+  同時**收緊 401 的範圍**（狀態碼與 body 形狀不變，只是更多情況會落進來）：
+  `sub` 不是標準 UUID、`iss` 不符或缺失、缺 `exp`，以及 token 簽得過但該使用者已不存在，
+  現在都是 `not_authenticated`；其中最後一項原本是 500。
+  **完全沒變的**：14 個錯誤 token 的字串、Note／NearbyHint 的鍵、兩種 envelope、
+  時間戳格式、`details` 的內容、游標編碼。
 
 - 2026-08-25 **v4.0**（後端全換 Java／Spring Boot，見 ADR-0011）：
   **transport 破壞性改版，規則零變更。** 業務 API 從 Supabase PostgREST 的 RPC 搬到

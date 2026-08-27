@@ -11,7 +11,7 @@ cd api && ./mvnw test        # 需要 Docker Desktop 開著（Testcontainers 起
 
 ## 設定（全部由環境變數注入）
 
-前四個**缺了就啟動失敗**，這是刻意的：
+這五個**缺了就啟動失敗**，這是刻意的：
 
 | 環境變數 | 值 |
 |---|---|
@@ -19,15 +19,17 @@ cd api && ./mvnw test        # 需要 Docker Desktop 開著（Testcontainers 起
 | `SPRING_DATASOURCE_USERNAME` | `hapeetrail_api.iwkuywlrggxolyoiyrui`（Supavisor 用 `<角色>.<專案ref>` 認 tenant——對自訂角色也適用，已探針證實） |
 | `SPRING_DATASOURCE_PASSWORD` | 一次性手動 SQL 設的角色密碼 |
 | `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI` | `https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1/.well-known/jwks.json` |
+| `HAPEETRAIL_JWT_ISSUER` | `https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1`（驗 `iss`；`aud=authenticated` 是所有 Supabase 專案的共同值，擋跨專案 token 靠這個） |
 
-第五個**有預設值（RS256），漏了不會啟動失敗、只會每個請求靜靜 401**——所以打 hosted JWKS 時一定要帶：
+下面這個**有預設值（RS256），漏了不會啟動失敗、只會每個請求靜靜 401**——所以打 hosted JWKS 時一定要帶：
 
 | 環境變數 | 值 |
 |---|---|
 | `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWS_ALGORITHMS` | `RS256,ES256`——**這個專案實測就是 `ES256`**，少了它每顆真 token 都 401 |
 
-repo 內沒有任何機密值。`fly.toml` 只放可公開的設定；Fly 上這一個由 `fly.toml` 的 `[env]` 帶，
-**為什麼不能放 `application.properties`** 寫在那裡的註解。
+repo 內沒有任何機密值。`fly.toml` 只放可公開的設定：Fly 上 `JWS_ALGORITHMS` 與
+`HAPEETRAIL_JWT_ISSUER` 兩個都由 `[env]` 帶（都不是機密），其餘走 `fly secrets`。
+`JWS_ALGORITHMS` **為什麼不能放 `application.properties`** 寫在 `fly.toml` 的註解裡。
 
 ## 本機跑容器（不必碰 Fly）
 
@@ -38,6 +40,7 @@ docker run --rm -p 8080:8080 \
   -e SPRING_DATASOURCE_USERNAME=... -e SPRING_DATASOURCE_PASSWORD=... \
   -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=... \
   -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWS_ALGORITHMS=RS256,ES256 \
+  -e HAPEETRAIL_JWT_ISSUER=https://<專案ref>.supabase.co/auth/v1 \
   hapeetrail-api:local
 ```
 
@@ -76,6 +79,7 @@ fly secrets set --app hapeetrail \
   SPRING_DATASOURCE_USERNAME='hapeetrail_api.iwkuywlrggxolyoiyrui' \
   SPRING_DATASOURCE_PASSWORD='<步驟 2 那組>' \
   SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI='https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1/.well-known/jwks.json'
+# HAPEETRAIL_JWT_ISSUER 不是機密，已寫在 fly.toml 的 [env]——放這裡會被 secrets 蓋掉、兩處漂移
 ```
 
 ### 每次部署

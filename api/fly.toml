@@ -15,6 +15,10 @@ primary_region = "nrt"   # 東京，與 Supabase 專案同區
   # public-key-location 那條（**測試在走的**）呼叫 exactlyOneAlgorithm()，列兩個直接啟動失敗。
   SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWS_ALGORITHMS = "RS256,ES256"
 
+  # 只驗簽章擋不住別的 Supabase 專案簽的 token（aud=authenticated 是所有專案的共同值）。
+  # 不是機密，所以放這裡；缺了啟動就失敗。
+  HAPEETRAIL_JWT_ISSUER = "https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1"
+
 [http_service]
   internal_port = 8080
   force_https = true

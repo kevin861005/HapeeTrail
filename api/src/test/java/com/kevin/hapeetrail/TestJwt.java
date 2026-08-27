@@ -23,6 +23,9 @@ import com.nimbusds.jwt.SignedJWT;
  */
 final class TestJwt {
 
+	/** 服務認得的發行者，餵給 {@code hapeetrail.jwt.issuer}（形狀比照 GoTrue）。 */
+	static final String ISSUER = "https://test-project.supabase.co/auth/v1";
+
 	/** 服務認得的那把。 */
 	static final RSAKey SIGNING_KEY = generate();
 
@@ -40,18 +43,29 @@ final class TestJwt {
 	/**
 	 * @param subject null ＝ 不放 {@code sub}
 	 * @param audience null ＝ 不放 {@code aud}
+	 * @param expiresAt null ＝ 不放 {@code exp}（沒有到期時間的 token）
 	 */
 	static String token(RSAKey key, String subject, String audience, Instant expiresAt) {
+		return token(key, subject, audience, expiresAt, ISSUER);
+	}
+
+	/** @param issuer null ＝ 不放 {@code iss} */
+	static String token(RSAKey key, String subject, String audience, Instant expiresAt, String issuer) {
 		JWTClaimsSet.Builder claims = new JWTClaimsSet.Builder()
 			.issueTime(Date.from(Instant.now().minusSeconds(60)))
-			.expirationTime(Date.from(expiresAt))
 			// GoTrue 會放，但服務不看它——匿名與正式帳號在服務端無差別。
 			.claim("is_anonymous", true);
+		if (expiresAt != null) {
+			claims.expirationTime(Date.from(expiresAt));
+		}
 		if (subject != null) {
 			claims.subject(subject);
 		}
 		if (audience != null) {
 			claims.audience(audience);
+		}
+		if (issuer != null) {
+			claims.issuer(issuer);
 		}
 		try {
 			SignedJWT jwt = new SignedJWT(

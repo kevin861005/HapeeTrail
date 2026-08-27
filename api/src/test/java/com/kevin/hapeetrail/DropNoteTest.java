@@ -483,7 +483,28 @@ class DropNoteTest extends SupabaseDbTest {
 						"{\"content\":\"a\",\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7},\"style\":2.0}"),
 				Arguments.of("color 超出 32 位元整數",
 						"{\"content\":\"a\",\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7},"
-								+ "\"color\":99999999999}"));
+								+ "\"color\":99999999999}"),
+				// 反方向那一格：數值欄位給字串上面已經守住了，字串欄位給數值同樣是型別錯誤。
+				// Jackson 對「純量 → 字串」預設寬鬆，123 會被靜默轉成 "123" 存進去。
+				Arguments.of("content 給數字",
+						"{\"content\":123,\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"),
+				Arguments.of("content 給小數",
+						"{\"content\":1.5,\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"),
+				Arguments.of("content 給布林",
+						"{\"content\":true,\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"),
+				// audience 給數值若被轉成字串，會拿到 invalid_audience（有 code）——
+				// 那是業務錯誤的形狀，而這是型別錯誤。
+				Arguments.of("audience 給數字",
+						"{\"content\":\"a\",\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7},"
+								+ "\"audience\":5}"),
+				Arguments.of("audience 給布林",
+						"{\"content\":\"a\",\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7},"
+								+ "\"audience\":true}"),
+				// U+0000 是合法的 JSON 逸出，但 Postgres 的 text 存不下它，而契約的 trim 字元集
+				// 也不含它（它不是空白）。不擋就是一路撞到 INSERT——任何拿得到 token 的人都能
+				// 無限次把 500 ＋ 堆疊打進日誌。屬格式錯誤那一桶，不新增契約 token。
+				Arguments.of("content 含 U+0000",
+						"{\"content\":\"a\\u0000b\",\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"));
 	}
 
 	/** 沒有附帶資料的 token 不得有 details 鍵（client 不必分辨「沒有」與「null」）。 */
