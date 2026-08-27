@@ -20,7 +20,7 @@
   票 07 探索 `3895128`、票 08 撿起＋收藏 `8dd0372`、票 09 閘門＋TTL＋超越量 `795568c`。
   五支端點全部實作完畢，`cd api && ./mvnw test` **174 支綠**。
   **步 11（票 11）✅ 完成 2026-08-27**：容器連 hosted Supabase、打 tailnet 網址——
-  newman **15 輪 240/240 斷言 0 失敗**、煙霧測試 **33 項全綠**、`./mvnw test` **174 綠**、
+  newman **15 輪 240/240 斷言 0 失敗**（最後一輪直接吃交付用的 environment 檔）、煙霧測試 **33 項全綠**、`./mvnw test` **174 綠**、
   `check-contract.py` exit 0、`redocly lint` valid。三份契約產出的 `servers`／`base_url`／`$BASE`
   同步改成 `http://kevinchenmacbook-air.tailac7ba7.ts.net:8080`。
   票面兩處沒照字面做（**已在票上揭露**）：①`tailscale serve` 的 https 拿不到憑證 ⇒ 改用 tailnet

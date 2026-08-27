@@ -12,7 +12,9 @@
 - [x] 煙霧測試暫時保留 RPC 版的斷言（切換前 RPC 仍在）；切換後的斷言在 13 改
 - [x] 語意文件 §10「契約外路徑」與實測一致（實測抓到兩處不符，已改文件）
 - [x] 三份契約產出交叉比對：token 清單、狀態碼、鍵名三方逐字一致
-- [x] **newman 對本機容器跑 ~~30~~ 15 輪**（容器連 hosted Supabase；打 tailnet 網址）——輪數與網址協定的兩處變更見下方「2026-08-27 的兩個裁決」。
+- [x] **newman 對本機容器跑 ~~30~~ 15 輪**（容器連 hosted Supabase；打 tailnet MagicDNS 網址，
+  最後一輪 12:31 **直接吃交付用的 environment 檔**、不覆寫 base_url，240/240）——
+  輪數與網址協定的兩處變更見下方「2026-08-27 的兩個裁決」。
   ⚠️ **不是**「與夥伴同一條路」：跑的機器就是跑容器的那台，流量沒有真的過 WireGuard，見裁決 ③
 - [x] **煙霧測試跑一次**：服務＝本機容器的 tailnet 網址、auth＝hosted Supabase（Free，已確認 ACTIVE 沒被暫停）→ **33 項全綠**
 - [x] openapi `servers` 第一項改為 tailnet 網址（Fly 移到「上線前」註記）；三份契約產出同步（見下方交付物）
@@ -233,25 +235,33 @@ Supabase 專案狀態 ACTIVE（沒被暫停）。
 
 ⚠️ **兩支不能在同一小時內跑**：newman 15 輪要 30 次 signup ＝ 剛好吃光整桶配額，
 煙霧測試自己還要 2 次。實際執行時間就是被這件事排開的——
-煙霧測試 **10:14**（裸 IP 版）與 **11:30**（MagicDNS 版）、newman 15 輪 **11:20**。
-順序照抄成「連著跑」一定紅。
+煙霧測試 **10:14**（裸 IP 版）與 **11:30**（MagicDNS 版）、
+newman 15 輪 **11:20**（裸 IP 版）與 **12:31**（MagicDNS 版）。
+四次之間的間隔都是被配額逼出來的，順序照抄成「連著跑」一定紅。
 
 **newman 15 輪：**
 
+跑了兩輪，第二輪是複核之後的補驗：
+
 ```
-$ npx newman run docs/api/postman/hapeetrail.postman_collection.json \
-    -e docs/api/postman/hapeetrail-hosted.postman_environment.json \
+（11:20，裸 IP 版——當時契約產出裡還是 IP）
+$ npx newman run … -e …hapeetrail-hosted.postman_environment.json \
     --env-var base_url=http://100.94.228.79:8080 \
     --env-var apikey=sb_publishable_… -n 15
 iterations 15／0 failed   requests 240／0   assertions 240／0   duration 27.1s
 average response time 99ms [min 4ms, max 1021ms, s.d. 100ms]
+
+（12:31，MagicDNS 版——**刻意不帶 `--env-var base_url`**，直接吃 environment 檔裡的值，
+  驗的就是交給夥伴的那份檔本身）
+$ npx newman run docs/api/postman/hapeetrail.postman_collection.json \
+    -e docs/api/postman/hapeetrail-hosted.postman_environment.json \
+    --env-var apikey=sb_publishable_… -n 15
+iterations 15／0 failed   requests 240／0   assertions 240／0   duration 25.9s
+average response time 94ms [min 4ms, max 1005ms, s.d. 97ms]
 ```
 
-⚠️ **這一輪打的是裸 IP**（11:20 執行，當時契約產出裡還是 IP）。複核抓出應改 MagicDNS 名之後
-**沒有重跑 newman**——配額當時已被這 30 次 signup 吃光，重跑要再等一小時。
-補驗的是煙霧測試那一支（下面那塊，11:30，打 MagicDNS 名、33 項全綠），
-兩者打到的是**同一個 TCP endpoint**（`dig` → `100.94.228.79`，服務不做 host-based routing）。
-**要百分之百對齊契約字面的話，newman 對 MagicDNS 名還欠一次重跑**——記在這裡不含糊帶過。
+第二輪把「契約字面與實測不同址」這個缺口收掉了：**交付檔案原封不動跑，240 支斷言 0 失敗**。
+apikey 一律用 `--env-var` 帶進去，沒有落進 git（hosted environment 檔的 `apikey` 仍刻意留空）。
 
 16 支斷言 × 15 輪。**apikey 用 `--env-var` 帶進去，沒有落進 git**
 （hosted environment 檔的 `apikey` 仍刻意留空）。
