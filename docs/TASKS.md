@@ -80,7 +80,10 @@
   ——收 401 會在 token 失效時整段集體假綠，函式那組收 403 則等於接受「函式重建、只 revoke EXECUTE」。
   新增 `SmokeTest.clientRolesOwnNothingInPublic`（第 195 支）：逐物件問 pg 目錄，
   接手「涵蓋我沒想到的新物件」那半——hosted 的根路徑清單對 client 直接 401，證不到這件事。
-  newman 對容器（連 hosted）NEWMAN_EVIDENCE。
+  newman 對容器（連 hosted Supabase）**10 輪 160/160 斷言 0 失敗**（22.5s，直接吃交付用的
+  environment 檔，不覆寫 `base_url`）；切換後的煙霧測試對真 hosted **39 項全綠**。
+  ⚠️ 輪數 10 而非 15：GoTrue 匿名註冊 30 次／小時／IP，煙霧 2 次＋newman 每輪 2 次，
+  同一小時要跑兩支就得留餘裕（本次 22／30）。
   `supabase/tests/notes.test.sql` 退役（刪除），**14 列情境對照表**（每段搬到哪張票／哪個 Java 測試）記進票 13。
   `docs/api/notes.md` §10 與 CLAUDE.md 的「施工中」聲明改為 as-built。
   施工檔 `.scratch/java-rewrite/` 搬 `docs/tasks/archive/java-rewrite/`。

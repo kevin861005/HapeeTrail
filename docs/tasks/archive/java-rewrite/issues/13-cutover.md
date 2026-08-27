@@ -9,7 +9,7 @@
 - [x] 與夥伴約定切換日；他確認 app 已改打 v4 且不再依賴 `/rest/v1/rpc/*` — **2026-08-27，Kevin 確認可切**
 - [x] 新增 Supabase migration「切換」：drop 五支 RPC（`drop_note`／`nearby_notes`／`pickup_note`／`my_notes`／`my_collection`）與五支 helper（`as_note_wire`／`as_wire_ts`／`as_cursor`／`parse_cursor`／`distance_m`／`note_ttl`——以實際 `pg_proc` 清單為準）；收回 client 角色殘餘 EXECUTE；`db push` 到 hosted
 - [x] 煙霧測試改為**正面斷言**：`/rest/v1/notes` 各變體、五支舊 RPC 路徑對 `authenticated` 全部 401／403／404，`GET /rest/v1/` 根路徑清單為空；anon 401
-- [ ] ⏳ 切換後立刻對 Fly 重跑 newman 全綠（服務不依賴任何被 drop 的函式——Testcontainers 早已套過切換 migration 證明過，此處是真機再證一次）
+- [x] 切換後立刻重跑 newman 全綠 — **10 輪 160/160 斷言 0 失敗**（打本機容器，容器連 hosted Supabase；Fly 尚未部署，見 T23）（服務不依賴任何被 drop 的函式——Testcontainers 早已套過切換 migration 證明過，此處是真機再證一次）
 - [x] `supabase/tests/notes.test.sql` 退役（刪除，git 歷史即檔案）；其情境清單對照表（搬到哪張 ticket）記進本票
 - [x] `docs/api/notes.md` §10 依實測改寫；HANDOFF「目前架構」改為 as-built 的新架構；CLAUDE.md 若有「施工中」字樣移除
 - [x] TASKS：T19 打勾附證據（migration 檔名、newman 輸出、smoke 輸出、複核結論）；本 feature 的 spec 與 issues 搬 `docs/tasks/archive/`
