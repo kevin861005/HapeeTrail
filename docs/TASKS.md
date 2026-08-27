@@ -40,6 +40,10 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T21** 舊架構殘留清除（Java 化後的死檔）
+  ✅ 2026-08-27：刪 `.github/modernize/`（Copilot 殘骸，根目錄那份）、`docs/api/build-doc.py`（硬編 `/rest/v1/rpc/`，v4 失效且無引用）、
+  `docs/HANDOFF.md`（舊架構交接看板，已由 `.claude/HANDOFF.local.md` 取代）；`.scratch/api-contract-v3/` 搬 `docs/tasks/archive/`（T11 已完結）。
+  刻意不動：`notes.test.sql`、hosted-smoke 的 RPC 段、DB 內 RPC（票 13 切換日處理）；改名殘留屬 T20
 - [x] **T2** 部署到 hosted Supabase 專案（東京）
   ✅ 2026-07-29：`https://iwkuywlrggxolyoiyrui.supabase.co`（Northeast Asia / Tokyo）。
   14 個 migration 全數套用，`supabase migration list --linked` 的 local／remote 逐一對上。

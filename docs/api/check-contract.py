@@ -8,7 +8,7 @@ postman/（可執行範例）。notes.md 開頭寫著「任何介面變更三份
 用法：
     docs/api/check-contract.py          # 全綠 exit 0，任何一項不一致 exit 1
 
-需要 PyYAML（`pip install pyyaml`）。刻意不像 build-doc.py 那樣走
+需要 PyYAML（`pip install pyyaml`）。刻意不走（已移除的 build-doc.py 曾用的）
 `npx redocly bundle`：這支只讀 schema 與 description，`$ref` 只有兩個且都在
 components/responses，自己解比多開一個 node 行程便宜。
 
