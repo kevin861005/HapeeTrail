@@ -7,6 +7,22 @@
 （無）
 
 ## 待辦
+- [ ] **T25** 整合 Google + Apple 登入（2026-09-06 裁決：保留匿名＝訪客模式，Google/Apple 為升級綁定、
+  同一 UUID 延續；不開放自行註冊）。研究已完成：`docs/research/2026-09-06-supabase-anon-upgrade-native-oauth.md`
+  （核心：升級只能用 `linkIdentityWithIdToken`、後端零改動）。spec 與施工票：`.scratch/t25-social-login/`
+- [ ] **T26** 免費公網部署供 tailnet 外手機測試（2026-09-06 裁決：**Cloud Run** asia-northeast1，
+  唯一真免費＋東京本地；OCI 因 7 天閒置回收＋自管 VM 出局）。研究：`docs/research/2026-09-06-free-deploy-platforms.md`；
+  runbook：`.scratch/t26-cloudrun/runbook.md`
+  **2026-09-06 部署完成並驗收**：GCP 專案 `hapeetrail-test`（個人帳號）、
+  服務 `https://hapeetrail-api-134868178961.asia-northeast1.run.app`（revision 00001）。
+  證據：health 200（冷啟動全程 2.2s）、無/壞 token 401 problem+json 鍵序正確、
+  真 GoTrue token 200、newman 5 輪 **80/80 斷言 0 失敗**（平均 91ms）、
+  Kevin 手機行動網路實測 health UP。契約三檔 base_url 已換（check-contract exit 0、redocly valid）。
+  **剩**：①commit＋push（Pages 才會更新）②通知夥伴換 base URL＋移除 ATS 例外 ③Mac 容器退役與否
+  ④（可選）US$1 預算告警。
+  ⚠️ 這是測試部署，不推翻 ADR-0011 的 Fly 生產決定；Cloud Run 若跑得順、要取代 T23 時另立 ADR 討論
+- [ ] **T27** 棄置匿名帳號清理策略（T25 裁決：MVP 不清）。官方無自動清理；設計時要一起想：
+  保留期限、被清帳號留下的便條歸屬（`notes.author_id` 連帶）、排程機制。等規模有感再動
 - [ ] **T20** 產品正名 Trailstamp → HapeeTrail：CLAUDE.md、openapi 標題、`supabase/config.toml` project_id、
   ADR／HANDOFF 標題、`docs/index.html`（`CONTEXT.md` 已定案）
 - [ ] **T23** 上線前的基礎設施收尾（T19 之後；沒有死線，夥伴串接期間服務跑在 Kevin 的 Mac 上）
