@@ -1,4 +1,4 @@
-package com.kevin.hapeetrail;
+package com.kevin.hapeetrail.notes;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -13,6 +13,8 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
+import com.kevin.hapeetrail.config.ApiException;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -22,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 便條的全部業務規則。常數與判定順序與 v3.3 的 RPC 逐字相同（契約 v4 只換 transport）。
  */
 @Service
-class NoteService {
+public class NoteService {
 
 	/** 內容上限。附帶在 {@code content_too_long} 裡的數字與閘門用的是同一個常數。 */
 	private static final int MAX_CHARS = 500;

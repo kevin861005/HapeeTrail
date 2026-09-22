@@ -1,10 +1,11 @@
-package com.kevin.hapeetrail;
+package com.kevin.hapeetrail.notes;
 
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.Base64;
 import java.util.UUID;
 
+import com.kevin.hapeetrail.config.ApiException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -27,14 +28,14 @@ import org.springframework.http.HttpStatus;
  * <p>base64**url** 而非標準 base64：游標活在 query 參數裡，標準版的 {@code +} 會被
  * 解成空白（且 Postman 不替變數編碼），症狀是 client 忠實地原樣回傳卻拿到 invalid_cursor。
  */
-record Cursor(String list, OffsetDateTime key, UUID id) {
+public record Cursor(String list, OffsetDateTime key, UUID id) {
 
 	/** 目前的編碼版本。改了編碼就 +1，舊游標於是被大聲拒絕而不是靜默誤讀。 */
 	private static final int VERSION = 1;
 
 	private static final ObjectMapper JSON = new ObjectMapper();
 
-	String encode() {
+	public String encode() {
 		String json = JSON.writeValueAsString(JSON.createObjectNode()
 			.put("v", VERSION)
 			.put("l", this.list)

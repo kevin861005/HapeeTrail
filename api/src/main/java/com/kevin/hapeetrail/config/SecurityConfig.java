@@ -1,4 +1,4 @@
-package com.kevin.hapeetrail;
+package com.kevin.hapeetrail.config;
 
 import java.io.IOException;
 import java.time.Instant;

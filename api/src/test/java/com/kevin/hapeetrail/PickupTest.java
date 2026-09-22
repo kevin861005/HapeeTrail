@@ -24,6 +24,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
+import com.kevin.hapeetrail.notes.NoteService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -246,8 +247,13 @@ class PickupTest extends SupabaseDbTest {
 	 */
 	@Test
 	void pickupReallyRunsInATransaction() throws Exception {
-		var attribute = new AnnotationTransactionAttributeSource().getTransactionAttribute(
-				NoteService.class.getDeclaredMethod("pickup", UUID.class, UUID.class, PickupRequest.class),
+		// 參數型別 PickupRequest 是 notes 包內的 wire 形狀，本測試看不見它——按名字取，
+		// pickup 沒有多載（多載了這裡會拿到不確定的那一支，是該回來改的訊號）。
+		var pickup = Stream.of(NoteService.class.getDeclaredMethods())
+			.filter((method) -> method.getName().equals("pickup"))
+			.findFirst()
+			.orElseThrow();
+		var attribute = new AnnotationTransactionAttributeSource().getTransactionAttribute(pickup,
 				NoteService.class);
 
 		assertThat(attribute).describedAs("@Transactional 沒生效（pickup 不是 public？）").isNotNull();
@@ -389,7 +395,7 @@ class PickupTest extends SupabaseDbTest {
 		assertProblem(get("/v1/me/collection?cursor=" + fromMyNotes, me), 400, "invalid_cursor");
 	}
 
-	/** 壞游標的行為與我的便條一致（同一個 {@link Cursor} 編解碼處，變形清單在 MyNotesTest）。 */
+	/** 壞游標的行為與我的便條一致（同一個 {@code Cursor} 編解碼處，變形清單在 MyNotesTest）。 */
 	@Test
 	void badCollectionCursorsAreRejected() throws Exception {
 		Traveler me = traveler();

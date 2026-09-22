@@ -1,4 +1,4 @@
-package com.kevin.hapeetrail;
+package com.kevin.hapeetrail.notes;
 
 import java.util.List;
 import java.util.UUID;

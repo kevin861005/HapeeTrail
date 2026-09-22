@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 票 14 M1：信封的最後一道。業務錯誤與框架錯誤各自有人接，但「沒人接的例外」原本會掉出
- * {@link ApiErrors} 之外，回 Spring 自己的 500 錯誤頁（{@code {"timestamp":…,"error":…}}）
+ * {@code ApiErrors} 之外，回 Spring 自己的 500 錯誤頁（{@code {"timestamp":…,"error":…}}）
  * ——那個形狀沒有 {@code type}、沒有 {@code code}，client 的「有 code 才是業務錯誤」在 500 上
  * 就不成立了。
  */

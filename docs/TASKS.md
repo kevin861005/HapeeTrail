@@ -21,6 +21,13 @@
   **剩**：①commit＋push（Pages 才會更新）②通知夥伴換 base URL＋移除 ATS 例外 ③Mac 容器退役與否
   ④（可選）US$1 預算告警。
   ⚠️ 這是測試部署，不推翻 ADR-0011 的 Fly 生產決定；Cloud Run 若跑得順、要取代 T23 時另立 ADR 討論
+- [ ] **T28** 登出立即失效＋註銷帳號 API（2026-09-22 grilling 七題裁決：登出零端點、
+  服務每請求驗 `auth.sessions` 存活、`DELETE /v1/me` 走 GoTrue Admin API 硬刪全 cascade、
+  無反悔期、分包整理先行）。spec：`.scratch/logout-account-deletion/spec.md`（`ready-for-agent`）；
+  ADR-0013 隨實作落檔。App Store 送審硬依賴（5.1.1(v)）
+- [ ] **T29** Apple token 撤銷（註銷帳號時打 Apple `/auth/revoke`，App Store 對 SIWA 的要求）。
+  **blocked by T25**（.p8／Service ID 設定）；T28 契約日後加選填 `appleAuthorizationCode` 欄位
+  （非破壞性）。送審前 T25＋T28＋T29 三者全關
 - [ ] **T27** 棄置匿名帳號清理策略（T25 裁決：MVP 不清）。官方無自動清理；設計時要一起想：
   保留期限、被清帳號留下的便條歸屬（`notes.author_id` 連帶）、排程機制。等規模有感再動
 - [ ] **T20** 產品正名 Trailstamp → HapeeTrail：CLAUDE.md、openapi 標題、`supabase/config.toml` project_id、
