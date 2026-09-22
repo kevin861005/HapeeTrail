@@ -170,8 +170,7 @@ class TtlTest extends SupabaseDbTest {
 
 	private static Traveler traveler() {
 		UUID id = UUID.randomUUID();
-		admin().sql("insert into auth.users (id) values (?::uuid)").param(id.toString()).update();
-		return new Traveler(id, TestJwt.valid(id));
+		return new Traveler(id, signIn(id));
 	}
 
 	/** {@code created_at} 的 SQL 運算式：由資料庫的時鐘往回推，測試不自己算時刻。 */

@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
+import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
@@ -35,11 +36,15 @@ class SecurityConfig {
 
 	/**
 	 * 401 的唯一形狀。所有變形（無 header、簽章不符、過期、缺 exp、sub 缺失或不是 UUID、
-	 * aud 不符、iss 不符或缺失）同一個答案：iOS 對 401 一律走刷新流程，不必比對 body。
+	 * aud 不符、iss 不符或缺失、session 已終止——見 {@code auth.LiveSessionValidator}）同一個答案：
+	 * iOS 對 401 一律走刷新流程，不必比對 body。
 	 * {@link ApiErrors} 的「使用者已不存在」走另一條路，但形狀逐字相同。
 	 */
 	private static final String NOT_AUTHENTICATED = """
 			{"type":"about:blank","status":401,"title":"not_authenticated","code":"not_authenticated"}""";
+
+	private static final String SERVER_ERROR = """
+			{"type":"about:blank","status":500,"title":"Internal Server Error"}""";
 
 	@Bean
 	SecurityFilterChain apiSecurity(HttpSecurity http) throws Exception {
@@ -111,11 +116,18 @@ class SecurityConfig {
 		};
 	}
 
+	/**
+	 * error dispatch 帶著例外 ＝ 原請求在驗證路徑上拋了例外（例如 session 檢查的查詢失敗，ADR-0013），
+	 * 容器轉 {@code /error} 時已沒有認證才落到這裡。那是伺服器故障不是身分問題：回 401 的話
+	 * iOS 會去刷新 session，匿名旅人被登出就永遠回不來。形狀同 {@link ApiErrors} 的 catch-all
+	 * （例外本身已由容器記在 ERROR）。
+	 */
 	private static void writeNotAuthenticated(HttpServletRequest request, HttpServletResponse response,
 			AuthenticationException ex) throws IOException {
-		response.setStatus(HttpStatus.UNAUTHORIZED.value());
+		boolean serverFailure = request.getAttribute(RequestDispatcher.ERROR_EXCEPTION) != null;
+		response.setStatus(serverFailure ? HttpStatus.INTERNAL_SERVER_ERROR.value() : HttpStatus.UNAUTHORIZED.value());
 		response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
-		response.getWriter().write(NOT_AUTHENTICATED);
+		response.getWriter().write(serverFailure ? SERVER_ERROR : NOT_AUTHENTICATED);
 	}
 
 }

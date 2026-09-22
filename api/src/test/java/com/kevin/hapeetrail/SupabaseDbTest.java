@@ -2,6 +2,7 @@ package com.kevin.hapeetrail;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -58,6 +59,14 @@ abstract class SupabaseDbTest {
 				.withCommand("postgres", "-D", "/etc/postgresql", "-c", "fsync=off")
 				.withCopyFileToContainer(MountableFile.forHostPath(migrations), "/migrations");
 		db.start();
+		// auth.sessions 是 GoTrue 自己的 migration 建的——hosted 與 supabase CLI 都在我們的
+		// migration 之前跑它，這顆映像沒有 GoTrue ⇒ 補一張等價的：同擁有者、同一條
+		// `grant … with grant option`（GoTrue migration 20240612123726），權限形狀才與 hosted 相同。
+		// ponytail: 欄位只取 PK 與 FK cascade 兩個；測試用得到其他欄位時再照 GoTrue 補。
+		exec(db, "psql -v ON_ERROR_STOP=1 -q -U supabase_admin -d postgres -c \"set role supabase_auth_admin;"
+				+ " create table auth.sessions (id uuid primary key,"
+				+ " user_id uuid not null references auth.users (id) on delete cascade);"
+				+ " grant select on auth.sessions to postgres with grant option\"");
 		// ponytail: 用映像內的 psql 套 migration，不用 Java 端的 SQL 切割器——
 		// migration 裡滿是 $$ 函式本體，切錯就是難查的假紅。
 		exec(db, "set -e; for f in /migrations/*.sql; do "
@@ -89,6 +98,19 @@ abstract class SupabaseDbTest {
 	 */
 	static JdbcClient admin() {
 		return ADMIN;
+	}
+
+	/** GoTrue 登入時建的兩列：使用者與它的 session。回傳 session id（＝ token 的 {@code session_id}）。 */
+	static UUID openSession(UUID user) {
+		UUID session = UUID.randomUUID();
+		ADMIN.sql("insert into auth.users (id) values (?)").param(user).update();
+		ADMIN.sql("insert into auth.sessions (id, user_id) values (?, ?)").params(session, user).update();
+		return session;
+	}
+
+	/** 一個剛登入的旅人手上的 token：使用者與 session 都真的在。 */
+	static String signIn(UUID user) {
+		return TestJwt.valid(user, openSession(user));
 	}
 
 	@DynamicPropertySource

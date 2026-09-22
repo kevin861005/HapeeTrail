@@ -35,22 +35,25 @@ final class TestJwt {
 	private TestJwt() {
 	}
 
-	/** 一個剛匿名登入的旅人會拿到的東西。 */
-	static String valid(UUID subject) {
-		return token(SIGNING_KEY, subject.toString(), "authenticated", Instant.now().plusSeconds(3600));
+	/** 一個剛匿名登入的旅人會拿到的東西。session 列要真的在，見 {@link SupabaseDbTest#signIn}。 */
+	static String valid(UUID subject, UUID session) {
+		return token(SIGNING_KEY, subject.toString(), session.toString(), "authenticated",
+				Instant.now().plusSeconds(3600));
 	}
 
 	/**
 	 * @param subject null ＝ 不放 {@code sub}
+	 * @param session null ＝ 不放 {@code session_id}
 	 * @param audience null ＝ 不放 {@code aud}
 	 * @param expiresAt null ＝ 不放 {@code exp}（沒有到期時間的 token）
 	 */
-	static String token(RSAKey key, String subject, String audience, Instant expiresAt) {
-		return token(key, subject, audience, expiresAt, ISSUER);
+	static String token(RSAKey key, String subject, String session, String audience, Instant expiresAt) {
+		return token(key, subject, session, audience, expiresAt, ISSUER);
 	}
 
 	/** @param issuer null ＝ 不放 {@code iss} */
-	static String token(RSAKey key, String subject, String audience, Instant expiresAt, String issuer) {
+	static String token(RSAKey key, String subject, String session, String audience, Instant expiresAt,
+			String issuer) {
 		JWTClaimsSet.Builder claims = new JWTClaimsSet.Builder()
 			.issueTime(Date.from(Instant.now().minusSeconds(60)))
 			// GoTrue 會放，但服務不看它——匿名與正式帳號在服務端無差別。
@@ -60,6 +63,9 @@ final class TestJwt {
 		}
 		if (subject != null) {
 			claims.subject(subject);
+		}
+		if (session != null) {
+			claims.claim("session_id", session);
 		}
 		if (audience != null) {
 			claims.audience(audience);

@@ -56,6 +56,8 @@
   - 連帶收緊：簽章有效但使用者不存在／session 不存在的 token（現況部分端點回 200）一律變 401。
   - `hapeetrail_api` 需要 `SELECT ON auth.sessions` 的授權（一支 migration；auth schema
     不在 T24 的 public default privileges 範圍，無靜默破口疑慮）。
+    → **2026-09-22 修正**：單一 GRANT 不可行（票 02 研究 Q4），Kevin 裁決改走私有 schema 的 view
+    `hapeetrail_private.auth_sessions`，見 ADR-0013 與票 03。
   - 效能：每請求多一次 PK lookup（sub-ms）；這是「立即失效」的必要代價，記入 ADR-0013。
     不做快取——快取窗＝失效延遲窗，等於推翻需求本身。
 - **`DELETE /v1/me`**：無 request body；成功 `204 No Content`；服務以 Spring 內建

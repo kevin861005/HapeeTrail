@@ -48,7 +48,8 @@ class ApiErrors extends ResponseEntityExceptionHandler {
 	/**
 	 * {@code notes} 上只有 {@code author_id} 與 {@code picked_up_by} 兩支 FK，都指向
 	 * {@code auth.users} ⇒ {@code 23503} 的唯一語意就是「呼叫者的身分已不存在」
-	 * （帳號刪除、token 尚未過期）。那是身分問題不是伺服器故障：回 401 讓 iOS 走刷新流程，
+	 * （帳號刪除、token 尚未過期）。session 檢查（ADR-0013）已先擋下這種 token，剩下的是
+	 * 「過了檢查、寫入之前被註銷」的窗口。那是身分問題不是伺服器故障：回 401 讓 iOS 走刷新流程，
 	 * 500 只會讓它一直重試。其餘完整性錯誤不是身分問題，維持原樣往外拋。
 	 */
 	@ExceptionHandler(DataIntegrityViolationException.class)

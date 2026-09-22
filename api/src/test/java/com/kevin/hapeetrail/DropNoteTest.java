@@ -559,9 +559,8 @@ class DropNoteTest extends SupabaseDbTest {
 
 	private static Traveler traveler() {
 		UUID id = UUID.randomUUID();
-		admin().sql("insert into auth.users (id) values (?::uuid)").param(id.toString()).update();
 		double lat = BASE_LAT + SLOT.getAndIncrement() % 30;
-		return new Traveler(id, TestJwt.valid(id), lat, BASE_LNG);
+		return new Traveler(id, signIn(id), lat, BASE_LNG);
 	}
 
 	/** 直接以超級使用者塞列：上限測試要 5000 張，走 HTTP 太慢。 */

@@ -25,6 +25,8 @@
   服務每請求驗 `auth.sessions` 存活、`DELETE /v1/me` 走 GoTrue Admin API 硬刪全 cascade、
   無反悔期、分包整理先行）。spec：`.scratch/logout-account-deletion/spec.md`（`ready-for-agent`）；
   ADR-0013 隨實作落檔。App Store 送審硬依賴（5.1.1(v)）
+  進度：票 01 分包 ✅、票 02 研究 ✅、**票 03 session 存活 ✅ 2026-09-22**（view 方案、ADR-0013、
+  `./mvnw test` 200 綠；⚠️ 需與票 04 契約一起部署，migration 先 push）。下一張：票 04
 - [ ] **T29** Apple token 撤銷（註銷帳號時打 Apple `/auth/revoke`，App Store 對 SIWA 的要求）。
   **blocked by T25**（.p8／Service ID 設定）；T28 契約日後加選填 `appleAuthorizationCode` 欄位
   （非破壞性）。送審前 T25＋T28＋T29 三者全關

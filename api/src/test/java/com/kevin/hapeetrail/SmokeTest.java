@@ -40,12 +40,14 @@ class SmokeTest extends SupabaseDbTest {
 
 	/**
 	 * migration 依賴、但不由 migration 建立的東西：auth schema／auth.uid()／client 角色
-	 * 全部由映像自帶（所以不需要任何 shim），postgis 則要能裝進 extensions schema。
+	 * 由映像自帶，auth.sessions 由 GoTrue 建（這裡是 {@link SupabaseDbTest} 補的等價表），
+	 * postgis 則要能裝進 extensions schema。
 	 * 少了任何一項就在這裡直說，不要變成後面某支測試看不懂的 FK 或權限錯誤。
 	 */
 	@Test
 	void migrationPrerequisitesArePresent() {
 		assertThat(adminQueryBoolean("select to_regclass('auth.users') is not null")).isTrue();
+		assertThat(adminQueryBoolean("select to_regclass('auth.sessions') is not null")).isTrue();
 		assertThat(adminQueryBoolean("select count(*) = 0 from auth.users")).isTrue();
 		assertThat(adminQueryBoolean("select to_regprocedure('auth.uid()') is not null")).isTrue();
 		assertThat(adminQueryBoolean("select count(*) = 2 from pg_roles"
@@ -72,6 +74,11 @@ class SmokeTest extends SupabaseDbTest {
 		assertThat(queryBoolean("select has_table_privilege('public.notes', 'delete')")).isFalse();
 		// auth.users 只被 FK 用到，FK 檢查以表擁有者身分跑——服務不需要看得到使用者表。
 		assertThat(queryBoolean("select has_schema_privilege('auth', 'usage')")).isFalse();
+		// session 存活檢查（ADR-0013）只經由這個 view，而且只讀。簡單 view 是自動可更新的，
+		// 擁有者 postgres 對 auth.sessions 有 DELETE——多給一個寫權限，服務就能把任何人登出。
+		assertThat(queryBoolean("select has_table_privilege('hapeetrail_private.auth_sessions', 'select')")).isTrue();
+		assertThat(queryBoolean("select has_table_privilege('hapeetrail_private.auth_sessions',"
+				+ " 'insert, update, delete, truncate')")).isFalse();
 		// RLS 不關（notes_select_own 保留休眠），全列放行只給這個角色。
 		assertThat(adminQueryBoolean("select relrowsecurity from pg_class where oid = 'public.notes'::regclass")).isTrue();
 	}
@@ -93,6 +100,9 @@ class SmokeTest extends SupabaseDbTest {
 				+ " join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'")).isTrue();
 		// schema 本身的 CREATE——拿得到就能自己造一個帶 default privileges 的物件
 		assertThat(adminQueryBoolean("select bool_and(not has_schema_privilege(r, 'public', 'create'))"
+				+ " from unnest(array['anon', 'authenticated']) r")).isTrue();
+		// 服務自己的 schema（ADR-0013 的 session view）：client 角色連門都進不去
+		assertThat(adminQueryBoolean("select bool_and(not has_schema_privilege(r, 'hapeetrail_private', 'usage'))"
 				+ " from unnest(array['anon', 'authenticated']) r")).isTrue();
 	}
 

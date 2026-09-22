@@ -204,8 +204,7 @@ class RateGateTest extends SupabaseDbTest {
 
 	private static Traveler traveler() {
 		UUID id = UUID.randomUUID();
-		admin().sql("insert into auth.users (id) values (?::uuid)").param(id.toString()).update();
-		return new Traveler(id, TestJwt.valid(id));
+		return new Traveler(id, signIn(id));
 	}
 
 	private static UUID seed(Traveler author, Site at) {
