@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "HapeeTrail Notes API",
-    "description": "第一階段便條 API（契約 v4）。搭配 local.postman_environment.json 或 hosted.postman_environment.json 使用。\n\n依資料夾順序執行即為完整流程：旅人 A 留便條（含只給自己看的旅遊紀錄）→ 旅人 B 發現並撿起 → 收藏。\nsignup 請求的 Tests script 會自動把 access_token 寫回 environment，不需手動貼 token。\n\n**兩個 base URL**：業務端點打 {{base_url}}（HapeeTrail 服務）；匿名登入打 {{supabase_url}}（Supabase GoTrue），且只有它需要 apikey。\n\n**錯誤斷言看的是 RFC 9457 problem+json**：HTTP 狀態碼有語意（400/401/403/404/409/422/429），body 的 `code` 是唯一的判斷依據，`details` 是真的物件（v3 的「字串需二次解析」已消失）。\n\n每輪由「匿名登入（A）」的 Pre-request script 隨機挑一個地點，所有座標都由它算出，因此可以反覆執行而不互相干擾——API 沒有刪除便條的路徑，固定座標會讓歷次殘留的便條累積在同一處，滿 20 張後就把本輪的目標便條擠出 nearby 的「最近 20 筆」。\n\nwire format 權威：docs/api/openapi.yaml；語意規則：docs/api/notes.md。",
+    "description": "第一階段便條 API（契約 v4）。搭配 local.postman_environment.json 或 hosted.postman_environment.json 使用。\n\n依資料夾順序執行即為完整流程：旅人 A 留便條（含只給自己看的旅遊紀錄）→ 旅人 B 發現並撿起 → 收藏 → 旅人 C 登入即註銷（`DELETE /v1/me`）。\n\n旅人 C 是專為註銷示範開的帳號，A、B 不受影響：每輪淨留下的匿名帳號數不變，但匿名註冊從每輪 2 次變 3 次（Supabase 預設 30 次/小時/IP，連跑多輪時注意）。\nsignup 請求的 Tests script 會自動把 access_token 寫回 environment，不需手動貼 token。\n\n**兩個 base URL**：業務端點打 {{base_url}}（HapeeTrail 服務）；匿名登入打 {{supabase_url}}（Supabase GoTrue），且只有它需要 apikey。\n\n**錯誤斷言看的是 RFC 9457 problem+json**：HTTP 狀態碼有語意（400/401/403/404/409/422/429），body 的 `code` 是唯一的判斷依據，`details` 是真的物件（v3 的「字串需二次解析」已消失）。\n\n每輪由「匿名登入（A）」的 Pre-request script 隨機挑一個地點，所有座標都由它算出，因此可以反覆執行而不互相干擾——API 沒有刪除便條的路徑，固定座標會讓歷次殘留的便條累積在同一處，滿 20 張後就把本輪的目標便條擠出 nearby 的「最近 20 筆」。\n\nwire format 權威：docs/api/openapi.yaml；語意規則：docs/api/notes.md。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -521,6 +521,89 @@
             "method": "GET",
             "header": [],
             "url": { "raw": "{{base_url}}/actuator/health", "host": ["{{base_url}}"], "path": ["actuator", "health"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 旅人 C（註銷）",
+      "item": [
+        {
+          "name": "匿名登入（C）— 打 Supabase",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + access_token（切換為旅人 C：一登入就註銷，不動 A、B）', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.access_token).to.be.a('string');",
+                  "  pm.environment.set('access_token', j.access_token);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{apikey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": { "raw": "{{supabase_url}}/auth/v1/signup", "host": ["{{supabase_url}}"], "path": ["auth", "v1", "signup"] }
+          }
+        },
+        {
+          "name": "註銷 DELETE /v1/me",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('204 無 body（帳號與他寫下的便條已硬刪，不可逆）', () => {",
+                  "  pm.response.to.have.status(204);",
+                  "  pm.expect(pm.response.text()).to.eql('');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/me", "host": ["{{base_url}}"], "path": ["v1", "me"] }
+          }
+        },
+        {
+          "name": "註銷後重試（同一張 token）→ 401 not_authenticated",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('401 + code not_authenticated（session 已隨帳號消失；與其他 401 逐字同形）', () => {",
+                  "  pm.response.to.have.status(401);",
+                  "  const e = pm.response.json();",
+                  "  pm.expect(e.code).to.eql('not_authenticated');",
+                  "  pm.expect(e.status).to.eql(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/me", "host": ["{{base_url}}"], "path": ["v1", "me"] }
           }
         }
       ]

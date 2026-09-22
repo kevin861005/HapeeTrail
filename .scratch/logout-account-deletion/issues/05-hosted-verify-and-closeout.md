@@ -11,6 +11,9 @@
       （登出立即失效實證）→ 重登入 → 註銷 → 舊 token 401 ＋ 便條從探索消失。
       注意匿名註冊 30 次/時/IP 額度預算（與 newman 同小時共用）
 - [ ] newman 對容器（連 hosted Supabase）迴歸：既有斷言 0 失敗
+      ⚠️ 票 04 起 collection 每輪匿名註冊 **3 次**（新增旅人 C 註銷示範，Kevin 2026-09-22 裁決保留）。
+      與 hosted-smoke 同一小時跑時，newman 輪數 ≤ (30 − smoke 的註冊次數) ÷ 3。
+      跑完 environment 的 `access_token` 是 C 那張已失效的 token
 - [ ] 兩個獨立 subagent 複核，**只給 spec 與 ADR，禁讀施工票與實作過程假設**：
       ①安全——session 檢查可否繞過（偽 claim 形狀）、`DELETE /v1/me` 可否刪到別人、
       admin 金鑰是否可能進日誌／回應；②正確性——邊界、併發（兩請求同時註銷同帳號）、

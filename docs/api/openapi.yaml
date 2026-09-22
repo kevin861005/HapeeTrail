@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "4.0.2"
+  version: "4.1.0"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/HapeeTrail
@@ -11,8 +11,14 @@ info:
 
     **兩個 base URL，別混**：
     - 業務 API → 本檔頂層的 `servers`（HapeeTrail 服務）。
-    - `/auth/v1/*`（匿名登入、刷新、日後的帳號綁定）→ **Supabase GoTrue**，
+    - `/auth/v1/*`（匿名登入、刷新、登出、日後的帳號綁定）→ **Supabase GoTrue**，
       見 `/auth/v1/signup` 這個 path 自己的 `servers`。服務不代理任何 auth 路徑。
+
+    **登出走 Supabase（`POST /auth/v1/logout`，各語言 SDK 的 signOut），本服務沒有登出端點。**
+    被登出的 session 已簽發、尚未過期的 access token 打本服務一律 401（見 `Unauthorized`）。
+    前提是登出請求真的抵達 Supabase：離線時、或送出時 access token 已過期的登出，伺服器端的
+    session 沒有被終止，殘留的 token 在過期前仍然有效（notes.md §1）。
+    **註銷帳號**則打本服務的 `DELETE /v1/me`。
 
     **業務請求只帶一個 header**：`Authorization: Bearer <access_token>`（來自匿名登入）。
     apikey 只有 Supabase 的 auth 路徑需要，不再是業務 API 的一部分。
@@ -40,6 +46,8 @@ tags:
     description: 匿名 session（Supabase GoTrue，**不是** HapeeTrail 服務）
   - name: notes
     description: 便條核心循環（留下／發現／撿起／我的列表）
+  - name: account
+    description: 帳號（註銷）
   - name: ops
     description: 營運端點（健康檢查；不需認證）
 
@@ -410,6 +418,43 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/me:
+    delete:
+      tags: [account]
+      operationId: deleteMe
+      summary: 註銷帳號（立即、永久、不可逆）
+      description: |
+        永久刪除呼叫者的帳號：**立即生效、無反悔期、無法復原**。匿名帳號與已綁定帳號同樣適用。
+        刪除的對象只來自 Bearer token 本身——沒有 request body、沒有 path 參數，刪不到別人。
+
+        一併消失的：該帳號的全部 session（手上所有 token 立即 401）與綁定身分，以及
+        **這個旅人寫下的全部便條**——地圖上未撿的、旅遊紀錄、以及**已被其他旅人撿進收藏的**
+        （那些便條從撿藏者的 `/v1/me/collection` 靜默消失，列表只是少一件）。
+        **不受影響的**：這個旅人撿過的別人便條——仍留在原作者的 `/v1/me/notes` 裡、仍是已撿走
+        （`pickedUpAt` 不變），不會回到地圖上。
+
+        **重試**：回應在網路上遺失（timeout、斷線）時可以直接重試。重試得到 204 ＝已註銷；
+        得到 **401** 就照常走刷新流程——註銷成功過的話 session 已不存在、刷新會失敗，
+        那才代表已註銷（401 本身也可能只是 token 剛好過期，而第一次請求根本沒送到）。
+        註銷不需要自己的「已刪除」錯誤分支。
+      responses:
+        "204":
+          description: 已註銷。沒有 body。
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          description: |
+            伺服器端故障，**帳號沒有被刪**（同一張 token 仍可正常使用），可稍後重試。
+            problem+json、**沒有 `code`**（不是業務錯誤）。
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: about:blank
+                status: 500
+                title: Internal Server Error
+
   /actuator/health:
     get:
       tags: [ops]
@@ -480,8 +525,8 @@ components:
     Unauthorized:
       description: |
         `not_authenticated`——token 缺失、過期、簽章不符、`sub` 缺失或不是 UUID、
-        `aud` 不符、`iss` 不符或缺失、缺 `exp`，以及 token 簽得過但該使用者已不存在
-        （帳號已刪、token 尚未過期）。全部同一個答案。
+        `aud` 不符、`iss` 不符或缺失、缺 `exp`，以及 **session 已終止**：token 簽得過、
+        也還沒過期，但它所屬的 session 已不存在（已登出，或帳號已註銷）。全部同一個答案。
         **401 一律代表 session 問題**：走刷新流程，不需要（也不應該）比對 body。
       content:
         application/problem+json:

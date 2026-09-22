@@ -26,7 +26,9 @@
   無反悔期、分包整理先行）。spec：`.scratch/logout-account-deletion/spec.md`（`ready-for-agent`）；
   ADR-0013 隨實作落檔。App Store 送審硬依賴（5.1.1(v)）
   進度：票 01 分包 ✅、票 02 研究 ✅、**票 03 session 存活 ✅ 2026-09-22**（view 方案、ADR-0013、
-  `./mvnw test` 200 綠；⚠️ 需與票 04 契約一起部署，migration 先 push）。下一張：票 04
+  `./mvnw test` 200 綠；⚠️ 需與票 04 契約一起部署，migration 先 push）、
+  **票 04 `DELETE /v1/me`＋契約 v4.1.0 ✅ 2026-09-22**（fake GoTrue、`./mvnw test` 210 綠；
+  ⚠️ 部署需新 secret `HAPEETRAIL_GOTRUE_SECRET_KEY`）。下一張：票 05 hosted 實證
 - [ ] **T29** Apple token 撤銷（註銷帳號時打 Apple `/auth/revoke`，App Store 對 SIWA 的要求）。
   **blocked by T25**（.p8／Service ID 設定）；T28 契約日後加選填 `appleAuthorizationCode` 欄位
   （非破壞性）。送審前 T25＋T28＋T29 三者全關

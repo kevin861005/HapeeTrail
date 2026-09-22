@@ -25,6 +25,15 @@ read -s DB_PW
 printf '%s' "$DB_PW" | gcloud secrets create spring-datasource-password --data-file=-
 unset DB_PW
 
+# T28 起：註銷用的 Supabase secret key（sb_secret_…，Dashboard → API Keys 建一把專用的），同樣手法
+read -s GOTRUE_KEY
+printf '%s' "$GOTRUE_KEY" | gcloud secrets create gotrue-secret-key --data-file=-
+unset GOTRUE_KEY
+# 若 deploy 報這個 secret 的存取權限錯誤：給執行身分（預設 compute SA）讀取權
+#   gcloud secrets add-iam-policy-binding gotrue-secret-key \
+#     --member=serviceAccount:134868178961-compute@developer.gserviceaccount.com \
+#     --role=roles/secretmanager.secretAccessor
+
 # 部署：用 --source 讓 Cloud Build 遠端建映像。
 # ⚠️ 不要本機 build 直推：這台 Mac 是 Apple Silicon，本機映像是 arm64，Cloud Run 要 amd64。
 # ⚠️ JWS_ALGORITHMS 的值含逗號，--set-env-vars 預設以逗號分隔 ⇒ 必須用自訂分隔符語法 ^@^
@@ -37,7 +46,7 @@ gcloud run deploy hapeetrail-api \
   --memory 512Mi --cpu 1 \
   --min-instances 0 --max-instances 1 \
   --set-env-vars '^@^SPRING_DATASOURCE_URL=jdbc:postgresql://aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require@SPRING_DATASOURCE_USERNAME=hapeetrail_api.iwkuywlrggxolyoiyrui@SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1/.well-known/jwks.json@SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWS_ALGORITHMS=RS256,ES256@HAPEETRAIL_JWT_ISSUER=https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1' \
-  --set-secrets 'SPRING_DATASOURCE_PASSWORD=spring-datasource-password:latest'
+  --set-secrets 'SPRING_DATASOURCE_PASSWORD=spring-datasource-password:latest,HAPEETRAIL_GOTRUE_SECRET_KEY=gotrue-secret-key:latest'
 ```
 
 環境變數值以 `api/README.md` 的 runbook 為權威（上面的 URL／JWK 值抄自 fly.toml 與 HANDOFF，

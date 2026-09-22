@@ -11,7 +11,7 @@ cd api && ./mvnw test        # 需要 Docker Desktop 開著（Testcontainers 起
 
 ## 設定（全部由環境變數注入）
 
-這五個**缺了就啟動失敗**，這是刻意的：
+這六個**缺了就啟動失敗**，這是刻意的：
 
 | 環境變數 | 值 |
 |---|---|
@@ -20,6 +20,11 @@ cd api && ./mvnw test        # 需要 Docker Desktop 開著（Testcontainers 起
 | `SPRING_DATASOURCE_PASSWORD` | 一次性手動 SQL 設的角色密碼 |
 | `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI` | `https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1/.well-known/jwks.json` |
 | `HAPEETRAIL_JWT_ISSUER` | `https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1`（驗 `iss`；`aud=authenticated` 是所有 Supabase 專案的共同值，擋跨專案 token 靠這個） |
+| `HAPEETRAIL_GOTRUE_SECRET_KEY` | Supabase **secret key**（`sb_secret_…`，不是 legacy `service_role`）——Dashboard → Project Settings → API Keys 為本服務建一把專用、具名的（例如 `hapeetrail-api`），外洩時只輪替這一把。只給註銷（`DELETE /v1/me`）呼叫 GoTrue Admin API 用，放 `apikey` header；服務連 DB 仍走 `hapeetrail_api`。**機密**（等同 `service_role`，繞過 RLS） |
+
+GoTrue 的網址（`hapeetrail.gotrue.url`）預設就等於 `HAPEETRAIL_JWT_ISSUER`——hosted 上簽 token 的發行者就是
+GoTrue 本身，不必另設。兩者不同時（自訂網域、容器內連本機 Supabase）以 `HAPEETRAIL_GOTRUE_URL` 覆寫；
+設錯的話註銷一律 500（GoTrue 回 `text/plain` 的 404，不會被當成已刪除）。
 
 下面這個**有預設值（RS256），漏了不會啟動失敗、只會每個請求靜靜 401**——所以打 hosted JWKS 時一定要帶：
 
@@ -41,6 +46,7 @@ docker run --rm -p 8080:8080 \
   -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=... \
   -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWS_ALGORITHMS=RS256,ES256 \
   -e HAPEETRAIL_JWT_ISSUER=https://<專案ref>.supabase.co/auth/v1 \
+  -e HAPEETRAIL_GOTRUE_SECRET_KEY=... \
   hapeetrail-api:local
 ```
 
@@ -78,7 +84,8 @@ fly secrets set --app hapeetrail \
   SPRING_DATASOURCE_URL='jdbc:postgresql://aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require' \
   SPRING_DATASOURCE_USERNAME='hapeetrail_api.iwkuywlrggxolyoiyrui' \
   SPRING_DATASOURCE_PASSWORD='<步驟 2 那組>' \
-  SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI='https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1/.well-known/jwks.json'
+  SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI='https://iwkuywlrggxolyoiyrui.supabase.co/auth/v1/.well-known/jwks.json' \
+  HAPEETRAIL_GOTRUE_SECRET_KEY='<Dashboard 建的 sb_secret_…>'
 # HAPEETRAIL_JWT_ISSUER 不是機密，已寫在 fly.toml 的 [env]——放這裡會被 secrets 蓋掉、兩處漂移
 ```
 

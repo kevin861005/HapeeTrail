@@ -20,7 +20,8 @@ endpoint 的權威規格（path、header、request/response schema、錯誤格�
 
 - **兩個 base URL，別混**：
   - **業務 API** 打 **HapeeTrail 服務**（Spring Boot，東京）——`/v1/*`。
-  - **登入、刷新、日後的帳號綁定**打 **Supabase**——`/auth/v1/*`。服務不代理任何 auth 路徑。
+  - **登入、刷新、登出、日後的帳號綁定**打 **Supabase**——`/auth/v1/*`。服務不代理任何 auth 路徑。
+    **註銷帳號**則打 HapeeTrail 服務的 `DELETE /v1/me`（§1）——它是業務 API，不是 auth 路徑。
 - 業務請求**只帶一個 header**：`Authorization: Bearer <access_token>`。
   **apikey 不再出現在業務請求裡**——它只有 Supabase 的 auth 路徑需要。
 - 請求與回應的鍵名**都是 camelCase**（v3 請求端的 `p_` 參數名已消失），
@@ -36,7 +37,7 @@ endpoint 的權威規格（path、header、request/response schema、錯誤格�
 
 ---
 
-## 1. Session
+## 1. Session 與帳號
 
 匿名登入（等同各語言 SDK 的 signInAnonymously）——**打 Supabase，不打 HapeeTrail 服務**：
 
@@ -52,6 +53,39 @@ curl -X POST "$SUPABASE/auth/v1/signup" -H "apikey: $KEY" \
   匿名與正式帳號在 HapeeTrail 服務端**沒有任何差別**：所有規則一視同仁。
 - 拿到的 `access_token` 原樣放進業務請求的 `Authorization: Bearer`。
   刷新流程也在 Supabase 那一側（`/auth/v1/token`），服務不涉入。
+
+### 登出——打 Supabase，本服務沒有登出端點
+
+```bash
+curl -X POST "$SUPABASE/auth/v1/logout" -H "apikey: $KEY" -H "Authorization: Bearer $TOKEN"
+# → 204（等同各語言 SDK 的 signOut）
+```
+
+- 登出會刪除伺服器端的 session：不帶 `scope`（＝`global`）終止該帳號**所有裝置**上的 session，
+  `?scope=local` 只終止這一個，`?scope=others` 終止這一個以外的全部。被終止的 session 已簽發、
+  **尚未過期**的 access token 打 HapeeTrail 服務**立即 401**（§2），不必等 token 自己過期。
+  帳號與便條不受影響。
+- 邊界（不是保證）：登出請求沒有真的抵達 Supabase（離線），或送出時 access token 已過期，
+  伺服器端的 session 就沒有被終止，殘留的 token 在過期前仍然有效。
+
+### 註銷帳號：`DELETE /v1/me`——打 HapeeTrail 服務
+
+```bash
+curl -X DELETE "$BASE/v1/me" -H "Authorization: Bearer $TOKEN"
+# → 204，沒有 body
+```
+
+- **立即、永久、不可逆**：沒有反悔期，沒有復原。匿名帳號與已綁定帳號同樣適用。
+- 刪誰只看 Bearer token 本身：沒有 request body、沒有 path 參數。
+- **一併消失**：該帳號的全部 session（手上所有 token 立即 401）與綁定身分，以及這個旅人
+  **寫下的全部便條**——地圖上未撿的、旅遊紀錄、以及**已被其他旅人撿進收藏的**
+  （從撿藏者的收藏裡靜默消失，列表只是少一件，不會出現壞掉的項目）。
+- **不受影響**：這個旅人撿過的別人便條，仍留在原作者的 `/v1/me/notes` 裡、仍是已撿走
+  （`pickedUpAt` 不變），不會回到地圖上。
+- **重試**：回應在網路上遺失時直接重試即可。重試得到 **204** ＝已註銷；得到 **401** 就照 §2
+  走刷新流程——註銷成功過的話 session 已不存在、**刷新會失敗**，那才代表已註銷
+  （401 本身也可能只是 token 剛好過期，而第一次請求根本沒送到）。註銷不需要自己的錯誤分支。
+- **500**（沒有 `code`）＝伺服器端故障，**帳號沒有被刪**，同一張 token 仍可正常使用，稍後重試。
 
 ## 2. 錯誤：一個閘門，兩層分流
 
@@ -71,8 +105,9 @@ curl -X POST "$SUPABASE/auth/v1/signup" -H "apikey: $KEY" \
    走通用重試。這是 v3「第二層閘門」的對應物——規則沒變，只是判準從
    「`code == "P0001"`」變成「有沒有 `code`」。
 3. **401 一律代表 session 問題**（token 缺失、過期、簽章不符、`sub` 缺失或不是 UUID、
-   `aud` 不符、`iss` 不符或缺失、缺 `exp`，以及 token 簽得過但該使用者已不存在——
-   全部同一個答案），走刷新流程；**不需要、也不應該**比對 body。
+   `aud` 不符、`iss` 不符或缺失、缺 `exp`，以及 **session 已終止**——token 簽得過、也還沒過期，
+   但它所屬的 session 已不存在：已登出，或帳號已註銷——全部同一個答案），走刷新流程；
+   **不需要、也不應該**比對 body。
 
 - `type` 目前恆為 `about:blank`，`title` 是給人看的摘要（業務錯誤時等於 `code`）。
   **兩者都不是判斷依據**，不得對它們做字串比對。
@@ -337,7 +372,7 @@ curl -G "$BASE/v1/me/notes" -H "Authorization: Bearer $TOKEN" \
 只剩 `/auth/v1/*`。因此 `author_id`／`picked_up_by`／`location` 這些不上 wire 的欄位
 **沒有任何 client 路徑讀得到**。
 
-- **服務只暴露契約列出的路徑**：五支業務端點 ＋ 不需認證的 `GET /actuator/health`
+- **服務只暴露契約列出的路徑**：五支便條端點 ＋ `DELETE /v1/me` ＋ 不需認證的 `GET /actuator/health`
   （只回健康狀態，不揭露任何業務資料；實際 body 目前是
   `{"groups":["liveness","readiness"],"status":"UP"}`——**body 的內容不屬於契約，
   只保證 200 與 `status`**）。health 的兩個 group 子路徑（`/actuator/health/liveness`
@@ -354,6 +389,17 @@ curl -G "$BASE/v1/me/notes" -H "Authorization: Bearer $TOKEN" \
 > 此後一律 404。它們從來不屬於 v4 契約，也沒有 fallback 可留。
 
 ## 11. Changelog
+
+- 2026-09-22 **v4.1.0**（新端點＝非破壞性，minor bump）：
+  - **新增 `DELETE /v1/me`（註銷帳號）**：成功 204 無 body；立即、永久硬刪帳號與他寫下的全部便條
+    （含已被撿進別人收藏的），他撿過的別人便條不受影響（§1）。不新增任何錯誤 token。
+  - **401 的範圍收緊：session 已終止也是 401**——登出（打 Supabase）或註銷之後，手上尚未過期的
+    token 打本服務立即 `not_authenticated`，不再活到過期為止（§2；登出請求沒真的抵達 Supabase
+    時的邊界見 §1）。狀態碼與 body 形狀不變；
+    原本「token 簽得過但使用者已不存在」那一項併入這一條。
+  - 澄清：**登出走 Supabase `/auth/v1/logout`，本服務沒有登出端點**（§1）。
+  **完全沒變的**：14 個錯誤 token、Note／NearbyHint 的鍵、兩種 envelope、時間戳格式、`details`、
+  游標編碼、所有常數。
 
 - 2026-08-27 **v4.0.2**：`content` 含**孤立代理對**（沒配對的 `\ud800`–`\udfff`）由「靜默換成
   `?` 存入、回 200」改為 **400 且沒有 `code`**，與 U+0000 同一立場（§4）。規則層零變更，
