@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
 
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
@@ -50,9 +51,8 @@ final class FakeGoTrue {
 
 	/**
 	 * {@link #STALL} 裝死多久。服務的逾時必須比這短，否則測試就是在等它。
-	 * ponytail: 這顆 server 單執行緒，裝死期間下一個測試的請求也在排隊——所以只裝兩秒。
 	 */
-	static final Duration STALL_FOR = Duration.ofSeconds(2);
+	static final Duration STALL_FOR = Duration.ofSeconds(5);
 
 	private FakeGoTrue() {
 	}
@@ -70,6 +70,9 @@ final class FakeGoTrue {
 	private static HttpServer start() {
 		try {
 			HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+			// 每個請求一條 virtual thread：裝死的 handler 不會卡住別的請求（預設是單執行緒依序處理），
+			// 併發的 admin 呼叫也才真的併發。virtual thread 是 daemon，JVM 結束不必收。
+			server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 			server.createContext("/auth/v1/admin/users/", FakeGoTrue::handle);
 			server.start();
 			return server;

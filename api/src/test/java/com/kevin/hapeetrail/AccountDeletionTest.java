@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Stream;
 
@@ -37,8 +38,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 // 呼叫 GoTrue 的那段 HTTP client 開到最囉唆：金鑰「任何日誌層級都不出現」要在最壞的層級驗。
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
 		properties = { "logging.level.org.springframework.web=TRACE", "logging.level.org.springframework.http=TRACE",
-				// 正式值是 10s；測試不想真的等那麼久，只要比 FakeGoTrue 裝死的時間短就驗得到。
-				"hapeetrail.gotrue.timeout=400ms" })
+				// 正式值是 10s；測試不想真的等那麼久。這個值同時是**正常路徑**的上限
+				// （FakeGoTrue 會真的跑一次 cascade delete），所以留足餘裕，只要比裝死的 5 秒短就驗得到。
+				"hapeetrail.gotrue.timeout=1500ms" })
 class AccountDeletionTest extends SupabaseDbTest {
 
 	private static final ObjectMapper JSON = new ObjectMapper();
@@ -237,7 +239,7 @@ class AccountDeletionTest extends SupabaseDbTest {
 	void aNoteThatLosesTheRaceWithDeletionIs401() throws Exception {
 		Traveler me = traveler();
 		double[] site = site();
-		var answer = new java.util.concurrent.ArrayBlockingQueue<HttpResponse<String>>(1);
+		var answer = new ArrayBlockingQueue<HttpResponse<String>>(1);
 
 		try (var locker = adminConnection()) {
 			locker.setAutoCommit(false);
