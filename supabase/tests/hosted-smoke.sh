@@ -8,20 +8,28 @@
 #   * hosted 的 PostGIS 裝在 extensions schema 且服務的 search_path 找得到它
 #   * 匿名登入開關還開著
 #   * 不該可達的路徑確實不可達
+#   * 服務讀得到 hosted 真正的 auth.sessions（經 hapeetrail_private view）：GoTrue 登出刪列 ⇒ 立即 401
+#   * 註銷用的 secret key 設對了、hosted gateway 認它（sb_secret 換 JWT 是文件描述，只有這裡驗得到）
+#
+# 匿名註冊 30 次/時/IP：這支用 2 次，與 newman（每輪 3 次）同一小時共用額度。
 #
 # 用法：
-#   supabase/tests/hosted-smoke.sh <project-ref> <publishable-key> [service-base-url]
+#   supabase/tests/hosted-smoke.sh <project-ref> <publishable-key> <service-base-url>
 # 例：
-#   supabase/tests/hosted-smoke.sh iwkuywlrggxolyoiyrui sb_publishable_xxx
+#   supabase/tests/hosted-smoke.sh iwkuywlrggxolyoiyrui sb_publishable_xxx \
+#     https://hapeetrail-api-134868178961.asia-northeast1.run.app
 #   supabase/tests/hosted-smoke.sh http://127.0.0.1:54321 sb_publishable_xxx http://127.0.0.1:8080   # 本機乾跑
 #
 # publishable key 在 dashboard 的 Project Settings → API Keys。
 # ⚠️ 不要傳 service_role key——這支只該用 client 憑證驗，那正是重點。
 set -uo pipefail
 
-REF="${1:?用法：$0 <project-ref> <publishable-key> [service-base-url]}"
-KEY="${2:?用法：$0 <project-ref> <publishable-key> [service-base-url]}"
-API="${3:-https://hapeetrail.fly.dev}"
+U="用法：$0 <project-ref> <publishable-key> <service-base-url>"
+REF="${1:?$U}"
+KEY="${2:?$U}"
+# 位址必填：留預設值就會跟著服務搬家而過時（T26 換址漏改過一次），
+# 而過時的預設不會報錯，只會整片 000，看起來像服務掛了。
+API="${3:?$U}"
 # ref 也接受完整網址，好讓這支能對本機的 supabase 乾跑一次（部署前先確認它自己是對的）
 case "$REF" in http*) SB="$REF" ;; *) SB="https://${REF}.supabase.co" ;; esac
 
@@ -39,7 +47,7 @@ http() { : > "$BODY"; curl -s -o "$BODY" -w '%{http_code}' "$@"; }
 # 撿取那條斷言會在 pickedUpAt／content 都是 null 時假綠。
 jget() { python3 -c "import json;v=json.load(open('$BODY')).get('$1');print('' if v is None else v)" 2>/dev/null; }
 
-# 每次跑換一個隨機地點：API 沒有刪除路徑，固定座標跑久了會累積便條，
+# 每次跑換一個隨機地點：旅人 A 最後註銷會帶走他的便條，但中途失敗就會留下，固定座標跑久了會累積，
 # 讓 nearby 的「最近 20 筆」把本次的目標擠掉——失敗起來很像後端 bug。
 read -r LAT LNG < <(python3 -c 'import random;print(f"{random.uniform(-60,60):.7f} {random.uniform(-180,180):.7f}")')
 # 位移只動緯度：每度的公尺數不隨經度改變，隨機地點的距離才穩定。
@@ -264,6 +272,56 @@ for f in my_notes drop_note; do
 done
 
 echo
+echo "⑦ 註銷（DELETE /v1/me）：secret key 過得了 hosted gateway、硬刪、cascade 真的跑"
+# 放在 ⑥ 之後：⑥ 需要 TOKEN_A 活著。A 先留一張沒人撿的便條——「從探索消失」要先看得到才算數。
+UNAUTH=$(http "$API/v1/me/notes"; printf ' '; cat "$BODY")   # 401 的凍結形狀，下面逐字比對
+# 基準沒拿到就別往下比：連不上服務時基準與實測都是「000＋空 body」，兩條 401 斷言會一起假綠。
+case "$UNAUTH" in
+  401\ *) ;;
+  *) bad "取不到 401 基準（無 token 打 ${API} 得到「${UNAUTH}」）" "服務連不上或 401 形狀變了；下面兩條 401 斷言一律算失敗"
+     UNAUTH='<基準取得失敗>' ;;
+esac
+c=$(http -X POST "$API/v1/notes" "${A[@]}" \
+      -d "{\"content\":\"hosted smoke 2\",\"coordinate\":{\"latitude\":$LAT,\"longitude\":$LNG}}")
+NOTE2_ID=$(jget id)
+# 探索本身失敗要回非零——否則「查不到」會被當成「已消失」而假綠。
+nearby() {  # B 在 30m 外探索，印出結果裡的便條 id
+  local q="{\"coordinate\":{\"latitude\":$NEAR,\"longitude\":$LNG}}" c
+  c=$(http -X POST "$API/v1/notes/nearby" "${B[@]}" -d "$q")
+  [ "$c" = "200" ] && python3 -c "import json;print(*(x['id'] for x in json.load(open('$BODY'))['items']))"
+}
+if [ "$c" = "200" ] && ids=$(nearby) && [[ " $ids " == *" $NOTE2_ID "* ]]; then ok "註銷前：A 的第二張便條在 B 的探索結果裡"
+else bad "註銷前的基準不成立（留便條 ${c}，或 B 探索不到）" "$(head -c 300 "$BODY")"; fi
+
+c=$(http -X DELETE "$API/v1/me" -H "Authorization: Bearer $TOKEN_A")
+if [ "$c" = "204" ] && [ ! -s "$BODY" ]; then ok "DELETE /v1/me → 204 無 body"
+else bad "DELETE /v1/me → ${c}（預期 204 無 body；500 多半是 HAPEETRAIL_GOTRUE_SECRET_KEY 不對）" "$(head -c 300 "$BODY")"; fi
+c=$(http "$API/v1/me/notes" -H "Authorization: Bearer $TOKEN_A")
+[ "$c $(cat "$BODY")" = "$UNAUTH" ] && ok "註銷後舊 token → 401，與無 token 逐字相同" \
+  || bad "註銷後舊 token → ${c}（預期與無 token 逐字相同的 401）" "$(head -c 300 "$BODY")"
+c=$(http -X DELETE "$API/v1/me" -H "Authorization: Bearer $TOKEN_A")
+[ "$c" = "401" ] && ok "重試 DELETE /v1/me → 401（session 已隨帳號消失）" \
+  || bad "重試 DELETE /v1/me → ${c}（預期 401）" "$(head -c 300 "$BODY")"
+if ids=$(nearby) && [[ " $ids " != *" $NOTE2_ID "* ]]; then ok "A 沒被撿的便條從探索消失"
+else bad "探索失敗，或 A 註銷後他沒被撿的便條還在" "$(head -c 300 "$BODY")"; fi
+c=$(http "$API/v1/me/collection" "${B[@]}")
+if [ "$c" = "200" ] && python3 -c "
+import json,sys
+sys.exit(0 if all(n['id'] != '$NOTE_ID' for n in json.load(open('$BODY'))['items']) else 1)"
+then ok "A 被 B 撿走的便條也從 B 的收藏消失（cascade，不是空殼）"
+else bad "B 的收藏回 ${c} 或仍含 A 的便條" "$(head -c 300 "$BODY")"; fi
+
+echo
+echo "⑧ 登出（Supabase /auth/v1/logout，不帶 scope＝global，同 supabase-swift signOut() 預設）→ 立即 401"
+# ⑦ 最後一條剛證了 TOKEN_B 活著。重登入同一個帳號在這裡做不到：匿名帳號沒有憑證，
+# refresh token 隨 session 一起 cascade——匿名旅人登出＝永遠離開，可逆的登出要等 T25 綁定帳號。
+c=$(http -X POST "$SB/auth/v1/logout" -H "apikey: $KEY" -H "Authorization: Bearer $TOKEN_B")
+[ "$c" = "204" ] && ok "B 登出 → Supabase 204" || bad "B 登出 → ${c}（預期 204）" "$(head -c 300 "$BODY")"
+c=$(http "$API/v1/me/notes" "${B[@]}")
+[ "$c $(cat "$BODY")" = "$UNAUTH" ] && ok "登出後舊 token 打服務 → 401，與無 token 逐字相同（不必等 token 過期）" \
+  || bad "登出後舊 token → ${c}（預期與無 token 逐字相同的 401）" "$(head -c 300 "$BODY")"
+
+echo
 echo "── 通過 $pass 項，失敗 $fail 項"
-[ -n "$NOTE_ID" ] && echo "（此次建立的測試便條 id：${NOTE_ID}，已被旅人 B 撿走）"
+[ -n "$NOTE_ID" ] && echo "（測試便條 ${NOTE_ID}、${NOTE2_ID:-?} 應已隨旅人 A 註銷刪除；旅人 B 已登出）"
 exit $(( fail > 0 ))
