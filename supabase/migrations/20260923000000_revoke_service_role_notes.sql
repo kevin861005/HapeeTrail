@@ -1,0 +1,17 @@
+-- T28 票 05（ADR-0014）：收回 service_role 對 notes 的權限。
+--
+-- 票 04 起服務為了註銷持有一把 secret key（`sb_secret_…`，等同 service_role）。金鑰外洩或
+-- 服務被攻破時，爆炸半徑該停在「GoTrue admin 能做的事」——但 Supabase 對 public schema 的
+-- default privileges 早就把 notes 的全部權限給了 service_role，於是那把鑰匙同時打開
+-- `/rest/v1/notes`：全部便條的座標與內容可讀、可改、可刪。
+--
+-- RLS 擋不住它：service_role 帶 BYPASSRLS，`notes_api_all` 那類 policy 對它不生效。
+-- 唯一的鎖就是表權限，所以只能在這裡收。
+--
+-- 服務自己不受影響：它連 DB 一直是最小權限的 hapeetrail_api（ADR-0011），
+-- 從來不用 service_role 碰 notes；secret key 只拿來打 GoTrue Admin API。
+--
+-- 只收這一張表＝目前 public 唯一的物件。**往後新建的物件仍會自動拿到 default privileges**，
+-- 根治那一半是 T24（`alter default privileges`，專案級慣例變更）。防線同 anon／authenticated：
+-- `SmokeTest.theAdminKeyBuysNothingOnNotes` 每次 mvn test 都問一次 pg 目錄。
+revoke all on public.notes from service_role;

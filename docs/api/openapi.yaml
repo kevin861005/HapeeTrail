@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "4.1.0"
+  version: "4.1.1"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/HapeeTrail
@@ -444,8 +444,9 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "500":
           description: |
-            伺服器端故障，**帳號沒有被刪**（同一張 token 仍可正常使用），可稍後重試。
-            problem+json、**沒有 `code`**（不是業務錯誤）。
+            伺服器端故障，可稍後重試。problem+json、**沒有 `code`**（不是業務錯誤）。
+            通常代表帳號**沒有**被刪（同一張 token 仍可正常使用），但有一個窗口例外：
+            刪除已經生效、回應卻在回程遺失。重試照 `DELETE /v1/me` 的重試規則判斷即可。
           content:
             application/problem+json:
               schema:

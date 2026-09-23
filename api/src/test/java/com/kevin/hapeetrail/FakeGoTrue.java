@@ -5,6 +5,7 @@ import java.io.UncheckedIOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -44,6 +45,15 @@ final class FakeGoTrue {
 	/** 不回任何東西就掛斷：服務那側拿到的是 I/O 例外，不是 HTTP 回應（網路斷、GoTrue 掛掉）。 */
 	static final Reply HANG_UP = new Reply(0, null, null);
 
+	/** 收下請求但不回答：連線活著、答案永遠不來（GoTrue 卡死、網路黑洞）。只有逾時救得了。 */
+	static final Reply STALL = new Reply(-1, null, null);
+
+	/**
+	 * {@link #STALL} 裝死多久。服務的逾時必須比這短，否則測試就是在等它。
+	 * ponytail: 這顆 server 單執行緒，裝死期間下一個測試的請求也在排隊——所以只裝兩秒。
+	 */
+	static final Duration STALL_FOR = Duration.ofSeconds(2);
+
 	private FakeGoTrue() {
 	}
 
@@ -75,6 +85,16 @@ final class FakeGoTrue {
 		RECEIVED.add(new Request(exchange.getRequestMethod(), path, exchange.getRequestHeaders(), body));
 		Reply reply = override;
 		if (reply == HANG_UP) {
+			exchange.close();
+			return;
+		}
+		if (reply == STALL) {
+			try {
+				Thread.sleep(STALL_FOR);
+			}
+			catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+			}
 			exchange.close();
 			return;
 		}

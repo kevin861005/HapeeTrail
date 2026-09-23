@@ -7,6 +7,7 @@ import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
@@ -35,7 +36,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 // 呼叫 GoTrue 的那段 HTTP client 開到最囉唆：金鑰「任何日誌層級都不出現」要在最壞的層級驗。
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-		properties = { "logging.level.org.springframework.web=TRACE", "logging.level.org.springframework.http=TRACE" })
+		properties = { "logging.level.org.springframework.web=TRACE", "logging.level.org.springframework.http=TRACE",
+				// 正式值是 10s；測試不想真的等那麼久，只要比 FakeGoTrue 裝死的時間短就驗得到。
+				"hapeetrail.gotrue.timeout=400ms" })
 class AccountDeletionTest extends SupabaseDbTest {
 
 	private static final ObjectMapper JSON = new ObjectMapper();
@@ -201,6 +204,73 @@ class AccountDeletionTest extends SupabaseDbTest {
 		assertThat(output).doesNotContain(me.id().toString());
 	}
 
+	/**
+	 * GoTrue 收下請求卻永遠不回答：沒有逾時的話，這條請求會占住一條 Tomcat thread 直到平台
+	 * 的請求逾時（Cloud Run 300 秒）才由平台回一個不是 problem+json 的 504。逾時把它拉回
+	 * 服務自己的 500，而且帳號沒被刪、旅人重試是安全的。
+	 */
+	@Test
+	void aGoTrueThatNeverAnswersIs500BeforeThePlatformGivesUp() throws Exception {
+		Traveler me = traveler();
+		FakeGoTrue.reply(FakeGoTrue.STALL);
+
+		long start = System.nanoTime();
+		var response = deleteMe(me);
+		Duration waited = Duration.ofNanos(System.nanoTime() - start);
+
+		assertThat(response.statusCode()).describedAs(response.body()).isEqualTo(500);
+		assertThat(response.body()).isEqualTo("""
+				{"type":"about:blank","status":500,"title":"Internal Server Error"}""");
+		assertThat(waited).describedAs("逾時要比對方裝死的時間短，否則是在等對方放棄").isLessThan(FakeGoTrue.STALL_FOR);
+		assertThat(get("/v1/me/notes", me).statusCode()).describedAs("帳號還在").isEqualTo(200);
+	}
+
+	/**
+	 * 真實時序下的那個窗口：請求過了 session 檢查（ADR-0013）之後、寫入之前，帳號才被註銷。
+	 * 寫入撞上 FK（23503），答案必須是與其他 401 逐字相同的 {@code not_authenticated}，
+	 * 不是 500——iOS 只有一條「401 就走刷新」的路。
+	 *
+	 * <p>窗口用鎖釘住：先鎖住 {@code auth.users} 那一列，留便條的 FK 檢查（{@code FOR KEY SHARE}）
+	 * 會卡在那裡，這時才 commit 刪除。兩種時序都只有一個答案，所以不靠賽跑的運氣。
+	 */
+	@Test
+	void aNoteThatLosesTheRaceWithDeletionIs401() throws Exception {
+		Traveler me = traveler();
+		double[] site = site();
+		var answer = new java.util.concurrent.ArrayBlockingQueue<HttpResponse<String>>(1);
+
+		try (var locker = adminConnection()) {
+			locker.setAutoCommit(false);
+			try (var lock = locker.prepareStatement("select id from auth.users where id = ? for update")) {
+				lock.setObject(1, me.id());
+				lock.executeQuery();
+			}
+			var writing = new Thread(() -> {
+				try {
+					answer.put(drop(me, site));
+				}
+				catch (Exception ex) {
+					throw new IllegalStateException(ex);
+				}
+			});
+			writing.start();
+			// 請求要先卡在 FK 的鎖上，刪除才算「後到」；沒卡到也只是提早失敗，答案一樣。
+			Thread.sleep(500);
+			try (var delete = locker.prepareStatement("delete from auth.users where id = ?")) {
+				delete.setObject(1, me.id());
+				delete.executeUpdate();
+			}
+			locker.commit();
+			writing.join();
+		}
+
+		assertNotAuthenticated(answer.take());
+		assertThat(admin().sql("select count(*) from public.notes where author_id = ?")
+			.param(me.id())
+			.query(Integer.class)
+			.single()).describedAs("沒有半張孤兒便條").isZero();
+	}
+
 	// ─── 工具 ────────────────────────────────────────────────────────────────
 
 	record Traveler(UUID id, String token) {
@@ -239,6 +309,15 @@ class AccountDeletionTest extends SupabaseDbTest {
 			.POST(BodyPublishers.ofString(
 					"{\"coordinate\":{\"latitude\":" + at[0] + ",\"longitude\":" + at[1] + "}}"));
 		return ids(send(request));
+	}
+
+	/** 真的走一次留便條的端點（FK 在這裡被檢查）。 */
+	private HttpResponse<String> drop(Traveler traveler, double[] at) throws Exception {
+		return send(HttpRequest.newBuilder(uri("/v1/notes"))
+			.header("Authorization", "Bearer " + traveler.token())
+			.header("Content-Type", "application/json")
+			.POST(BodyPublishers.ofString("{\"content\":\"賽跑\",\"coordinate\":{\"latitude\":" + at[0]
+					+ ",\"longitude\":" + at[1] + "}}")));
 	}
 
 	private List<String> collection(Traveler traveler) throws Exception {

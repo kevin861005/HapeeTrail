@@ -2,6 +2,9 @@ package com.kevin.hapeetrail;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -63,9 +66,13 @@ abstract class SupabaseDbTest {
 		// migration 之前跑它，這顆映像沒有 GoTrue ⇒ 補一張等價的：同擁有者、同一條
 		// `grant … with grant option`（GoTrue migration 20240612123726），權限形狀才與 hosted 相同。
 		// ponytail: 欄位只取 PK 與 FK cascade 兩個；測試用得到其他欄位時再照 GoTrue 補。
+		// RLS 也照 GoTrue 開（migration 20240612123726）：view 讀得到列是靠擁有者 postgres 的
+		// BYPASSRLS，不是靠 auth 表沒設防。底座不開的話，哪天 view 改成 security_invoker、
+		// 或 postgres 不再 BYPASSRLS，hosted 會全站 401 而測試全綠。
 		exec(db, "psql -v ON_ERROR_STOP=1 -q -U supabase_admin -d postgres -c \"set role supabase_auth_admin;"
 				+ " create table auth.sessions (id uuid primary key,"
 				+ " user_id uuid not null references auth.users (id) on delete cascade);"
+				+ " alter table auth.sessions enable row level security;"
 				+ " grant select on auth.sessions to postgres with grant option\"");
 		// ponytail: 用映像內的 psql 套 migration，不用 Java 端的 SQL 切割器——
 		// migration 裡滿是 $$ 函式本體，切錯就是難查的假紅。
@@ -102,10 +109,23 @@ abstract class SupabaseDbTest {
 
 	/** GoTrue 登入時建的兩列：使用者與它的 session。回傳 session id（＝ token 的 {@code session_id}）。 */
 	static UUID openSession(UUID user) {
-		UUID session = UUID.randomUUID();
 		ADMIN.sql("insert into auth.users (id) values (?)").param(user).update();
+		return openAnotherSession(user);
+	}
+
+	/** 同一個旅人在另一台裝置上登入：GoTrue 每次登入多一列 session，使用者列還是那一列。 */
+	static UUID openAnotherSession(UUID user) {
+		UUID session = UUID.randomUUID();
 		ADMIN.sql("insert into auth.sessions (id, user_id) values (?, ?)").params(session, user).update();
 		return session;
+	}
+
+	/**
+	 * 測試自己開的連線，用在需要交易與鎖的地方（{@link #admin()} 每句自成一個交易）。
+	 * 呼叫者負責關。
+	 */
+	static Connection adminConnection() throws SQLException {
+		return DriverManager.getConnection(DB.getJdbcUrl(), DB.getUsername(), DB.getPassword());
 	}
 
 	/** 一個剛登入的旅人手上的 token：使用者與 session 都真的在。 */

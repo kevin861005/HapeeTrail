@@ -106,6 +106,18 @@ class SmokeTest extends SupabaseDbTest {
 				+ " from unnest(array['anon', 'authenticated']) r")).isTrue();
 	}
 
+	/**
+	 * 服務為了註銷（T28）持有一把等同 {@code service_role} 的 secret key。那把鑰匙外洩時的爆炸
+	 * 半徑到 GoTrue admin 為止就好——便條不該陪葬：`service_role` 對 notes 零權限，它才不能用
+	 * `/rest/v1/notes` 讀改刪全部座標與內容。**policy 擋不住它**（`service_role` BYPASSRLS），
+	 * 唯一的鎖就是表權限。ADR-0014；Supabase 的 default privileges 會把權限給回新物件，見 T24。
+	 */
+	@Test
+	void theAdminKeyBuysNothingOnNotes() {
+		assertThat(adminQueryBoolean("select not has_table_privilege('service_role', 'public.notes',"
+				+ " 'select, insert, update, delete, truncate, references, trigger')")).isTrue();
+	}
+
 	private Boolean queryBoolean(String sql) {
 		return this.jdbc.sql(sql).query(Boolean.class).single();
 	}

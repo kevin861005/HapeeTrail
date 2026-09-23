@@ -1,11 +1,14 @@
 package com.kevin.hapeetrail.account;
 
 import java.io.IOException;
+import java.net.http.HttpClient;
+import java.time.Duration;
 
 import tools.jackson.databind.JsonNode;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -35,12 +38,17 @@ class AccountController {
 
 	private final RestClient gotrue;
 
-	// ponytail: 沒設 read timeout——GoTrue 卡住時由平台的請求逾時封頂（Cloud Run 預設 300s）；
-	// 註銷是低頻操作。真遇到再給 builder 一個 JdkClientHttpRequestFactory#setReadTimeout。
 	AccountController(@Value("${hapeetrail.gotrue.url}") String url,
-			@Value("${hapeetrail.gotrue.secret-key}") String secretKey) {
+			@Value("${hapeetrail.gotrue.secret-key}") String secretKey,
+			@Value("${hapeetrail.gotrue.timeout}") Duration timeout) {
+		// 連線與回應各自封頂：沒有逾時的話，GoTrue 卡住＝一條 Tomcat thread 被占到平台放棄
+		// （Cloud Run 300s），而旅人收到的是平台的 504，不是契約裡的 problem+json。
+		JdkClientHttpRequestFactory requests = new JdkClientHttpRequestFactory(
+				HttpClient.newBuilder().connectTimeout(timeout).build());
+		requests.setReadTimeout(timeout);
 		this.gotrue = RestClient.builder()
 			.baseUrl(url)
+			.requestFactory(requests)
 			// secret key 只放 apikey（官方正路）：hosted gateway 換成 service_role 的短效 JWT 再轉給 GoTrue。
 			// Authorization 刻意不帶，尤其不轉送旅人自己的 Bearer（T28 研究 Q2.2、Q3.2）。
 			.defaultHeader("apikey", secretKey)

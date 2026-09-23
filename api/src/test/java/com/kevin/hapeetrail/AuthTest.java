@@ -130,6 +130,43 @@ class AuthTest extends SupabaseDbTest {
 		return token;
 	}
 
+	/**
+	 * 登出的範圍就是被刪掉的那些 session 列（GoTrue 的 local／others／global 都只是刪幾列的差別，
+	 * T28 研究 1.2）。手機上登出，筆電還登著——服務認的是 token 自己的那一列，不是整個帳號。
+	 */
+	@Test
+	void loggingOutOnOneDeviceLeavesTheOtherLoggedIn() throws Exception {
+		UUID user = UUID.randomUUID();
+		UUID phoneSession = openSession(user);
+		String phone = TestJwt.valid(user, phoneSession);
+		String laptop = TestJwt.valid(user, openAnotherSession(user));
+
+		admin().sql("delete from auth.sessions where id = ?").param(phoneSession).update();
+
+		assertThat(get("/v1/me/notes", "Bearer " + phone).statusCode()).isEqualTo(401);
+		assertThat(get("/v1/me/notes", "Bearer " + laptop).statusCode()).isEqualTo(200);
+	}
+
+	/**
+	 * 登出是可逆的日常操作，不是註銷：刪的是 session 列，便條一張都沒動。
+	 * （匿名帳號沒有憑證、重登入不回來，所以這條講的是日後綁定帳號的旅人——T25。）
+	 */
+	@Test
+	void signingInAgainFindsMyNotesWaiting() throws Exception {
+		UUID user = UUID.randomUUID();
+		String before = signIn(user);
+		admin().sql("insert into public.notes (author_id, content, lat, lng) values (?, '登出前留的', 1, 1)")
+			.param(user)
+			.update();
+
+		admin().sql("delete from auth.sessions where user_id = ?").param(user).update();
+		assertThat(get("/v1/me/notes", "Bearer " + before).statusCode()).isEqualTo(401);
+
+		var after = get("/v1/me/notes", "Bearer " + TestJwt.valid(user, openAnotherSession(user)));
+		assertThat(after.statusCode()).isEqualTo(200);
+		assertThat(after.body()).contains("登出前留的");
+	}
+
 	/** 除了 health 之外沒有任何路徑是免 token 的——連不存在的路徑都不先告訴你它不存在。 */
 	@Test
 	void everythingElseNeedsAToken() throws Exception {
