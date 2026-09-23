@@ -33,8 +33,8 @@
   → 真 GoTrue token 打 Fly 200 → `hosted-smoke.sh` 對 Fly 全綠）② 升 Supabase Pro（Free 閒置 7 天會暫停）
   ③ 契約三檔的 `servers`／`base_url` 從 tailnet MagicDNS 換成 Fly 網址 ④ 通知夥伴改 base URL。
   施工細節見 `docs/tasks/archive/java-rewrite/issues/10-first-deploy-fly.md`（票 10 的未完成半段）
-  ⑤ **T28 留下的兩件事**：(a) 含 `hapeetrail.gotrue.timeout`（GoTrue 逾時，預設 10s）的
-  revision 還沒部署到 Cloud Run——部署後順手跑一次 hosted-smoke；(b) 這個值目前按 Cloud Run
+  ⑤ **T28 留下的兩件事**：(a) ~~含 `hapeetrail.gotrue.timeout` 的 revision 部署~~
+  ✅ 2026-09-24 revision 00004 上線、hosted-smoke 47/47 全綠；(b) 逾時值目前按 Cloud Run
   的 300s 請求上限挑的，上 Fly 前要照 Fly 的逾時重看一次
 - [ ] **T24** public schema 的 default privileges 收緊（ADR-0007 在新架構下的唯一靜默破口）
   Supabase 對 `public` 設了 default privileges：**新建的表預設 grant ALL、新建的函式預設 grant EXECUTE
