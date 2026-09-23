@@ -21,14 +21,6 @@
   **剩**：①commit＋push（Pages 才會更新）②通知夥伴換 base URL＋移除 ATS 例外 ③Mac 容器退役與否
   ④（可選）US$1 預算告警。
   ⚠️ 這是測試部署，不推翻 ADR-0011 的 Fly 生產決定；Cloud Run 若跑得順、要取代 T23 時另立 ADR 討論
-- [ ] **T28** 登出立即失效＋註銷帳號 API（2026-09-22 grilling 七題裁決：登出零端點、
-  服務每請求驗 `auth.sessions` 存活、`DELETE /v1/me` 走 GoTrue Admin API 硬刪全 cascade、
-  無反悔期、分包整理先行）。spec：`.scratch/logout-account-deletion/spec.md`（`ready-for-agent`）；
-  ADR-0013 隨實作落檔。App Store 送審硬依賴（5.1.1(v)）
-  進度：票 01 分包 ✅、票 02 研究 ✅、**票 03 session 存活 ✅ 2026-09-22**（view 方案、ADR-0013、
-  `./mvnw test` 200 綠；⚠️ 需與票 04 契約一起部署，migration 先 push）、
-  **票 04 `DELETE /v1/me`＋契約 v4.1.0 ✅ 2026-09-22**（fake GoTrue、`./mvnw test` 210 綠；
-  ⚠️ 部署需新 secret `HAPEETRAIL_GOTRUE_SECRET_KEY`）。下一張：票 05 hosted 實證
 - [ ] **T29** Apple token 撤銷（註銷帳號時打 Apple `/auth/revoke`，App Store 對 SIWA 的要求）。
   **blocked by T25**（.p8／Service ID 設定）；T28 契約日後加選填 `appleAuthorizationCode` 欄位
   （非破壞性）。送審前 T25＋T28＋T29 三者全關
@@ -41,6 +33,9 @@
   → 真 GoTrue token 打 Fly 200 → `hosted-smoke.sh` 對 Fly 全綠）② 升 Supabase Pro（Free 閒置 7 天會暫停）
   ③ 契約三檔的 `servers`／`base_url` 從 tailnet MagicDNS 換成 Fly 網址 ④ 通知夥伴改 base URL。
   施工細節見 `docs/tasks/archive/java-rewrite/issues/10-first-deploy-fly.md`（票 10 的未完成半段）
+  ⑤ **T28 留下的兩件事**：(a) 含 `hapeetrail.gotrue.timeout`（GoTrue 逾時，預設 10s）的
+  revision 還沒部署到 Cloud Run——部署後順手跑一次 hosted-smoke；(b) 這個值目前按 Cloud Run
+  的 300s 請求上限挑的，上 Fly 前要照 Fly 的逾時重看一次
 - [ ] **T24** public schema 的 default privileges 收緊（ADR-0007 在新架構下的唯一靜默破口）
   Supabase 對 `public` 設了 default privileges：**新建的表預設 grant ALL、新建的函式預設 grant EXECUTE
   給 anon／authenticated**（`docker exec … psql` 實測：在交易內 `create table public.oops_t(i int)`
@@ -50,11 +45,28 @@
   是**專案級慣例變更**，所以獨立成票、不夾在切換裡做。
   目前的防線：`SmokeTest.clientRolesOwnNothingInPublic` 逐物件問 pg 目錄（每次 `mvn test` 都跑，
   新物件一冒出來就紅）。**先討論再動**（CLAUDE.md Ticket 紀律）
+  ⚠️ **範圍要含 `service_role`**（T28 票 05 複核發現，ADR-0014）：default privileges 也把新物件
+  的全部權限給它，而服務為了註銷持有一把等同它的 secret key、且它 BYPASSRLS。
+  `notes` 這一張已由 `20260923000000` 收回，往後的新物件仍要靠這張票根治
 - [ ] **T3** UGC 檢舉機制（App Store 審查前必須；T19 之後在 Java 實作，不再寫 `report_note` RPC）
 
 ## 已完成
 
 （30 天內；更舊直接刪，git 歷史即檔案）
+
+- [x] **T28** 登出立即失效＋註銷帳號 API（App Store 5.1.1(v) 的硬依賴）
+  ✅ 2026-09-23 五張票全數完成。spec 與施工票已歸檔：`docs/tasks/archive/logout-account-deletion/`
+  範圍：分包整理（package by feature）→ 研究釘死三事實 → session 存活驗證（ADR-0013，每請求
+  查一次 `auth.sessions`，登出即 401）→ `DELETE /v1/me` 走 GoTrue Admin API 硬刪＋契約 v4.1.0
+  → hosted 實證＋兩個獨立複核。
+  證據：`fb7456f`／`eb555ae`／`d06c022`／`ac00d33`／`f124c51`／`f95b7f2`；
+  `cd api && ./mvnw test` → **215 綠**；hosted-smoke 對 Cloud Run **47/47**（含⑦註銷⑧登出）；
+  newman 3 輪 **57 斷言 0 失敗**；migration `20260922000000`（session view）、
+  `20260923000000`（收回 service_role）均已 `db push`。
+  複核四項發現全修（ADR-0014、契約 v4.1.1、逾時、補測試）。
+  ⚠️ **未完**：含 GoTrue 逾時的 Cloud Run revision 尚未部署（見 T23 ①）。
+  邊界：匿名帳號登出後無法重登入（沒有憑證、refresh token 隨 session cascade）；
+  US9「identities 一併刪除」要等 T25 有綁定帳號才驗得到。
 
 - [x] **T19** 後端全換 Java／Spring Boot（依 **ADR-0011**）
   ✅ 2026-08-27 全部 13 張票完成並切換上線。spec 與施工票已歸檔：`docs/tasks/archive/java-rewrite/`（`spec.md`、`issues/01–14`、`README.md` 施工順序表）
