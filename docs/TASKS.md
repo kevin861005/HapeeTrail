@@ -1,32 +1,19 @@
 # Trailstamp 任務清單
 
 > 唯一任務追蹤器。打勾必附證據（commit / file:line / 指令輸出）。
+> 看板：GitHub Project「HapeeTrail」https://github.com/users/kevin861005/projects/1 ——每個未完成 T 號對應一個 issue（括號內 #N），
+> issue 只是索引與進度狀態，內容與證據以本檔為準；新 T 號先寫這裡、再 `gh issue create` 掛上看板。
 
 ## 進行中
 
-- [ ] **T30** 基本資料 API `GET /v1/me`（2026-10-05 與夥伴議定：頭像、暱稱、登入方式、上次登入時間、
-  會員等級預留）。**實作完成 2026-10-05、未 commit**：`api/.../account/AccountController.java`（`me()`）、
-  view `hapeetrail_private.auth_users`（migration `20261005000000`）、`ProfileTest` 6 支。
-  獨立複核有條件通過，必修項已改（view 只投影純量、不露 email）。spec：`.scratch/t30-32-profile-app-config/spec.md`
-  ✅ 2026-10-05 commit `448293b`、migration 已 `db push`（remote 20261005000000）、hosted-smoke 對舊 revision 00004
-  **47/47**（migration 無害）。**剩**：Cloud Run 部署（gcloud 被 auto mode 分類器擋，Kevin 手動）→ 部署後
-  hosted-smoke ＋ newman（含 4 個新 request）→ `git push`（Pages 才會更新契約）→ `lastLoginAt` 語意等 T25 票 02 定稿
-- [ ] **T31** 更新檢查 API `GET /v1/app/update?version=`（強制＝低於最低相容版本；另回最新版與兩個門檻；
-  **不需登入**，App 啟動即可打）。
-  **實作完成 2026-10-05、未 commit**：`api/.../app/AppController.java`、表 `hapeetrail_private.app_versions`
-  （SQL editor 改、不重部署；migration 先塞 ios 1.0.0/1.0.0）、`AppTest`。✅ commit／db push 同 T30。
-  **剩**：部署→smoke→newman→push（同 T30）＋把門檻改成真實值
-- [ ] **T32** 功能總開關 API `POST /v1/app/flags`（client 傳 key 陣列，逐 key 回 true/false；未知 key＝false；
-  **不需登入**）。
-  **實作完成 2026-10-05、未 commit**：同 `AppController.java`、表 `hapeetrail_private.feature_flags`、`AppTest`。
-  ✅ commit／db push 同 T30。**剩**：部署→smoke→newman→push（同 T30）；與夥伴約定 key 命名（建議 `區域.功能`）
-  共同證據：`cd api && ./mvnw test` **256 綠**（215＋41）；契約 v4.2.0 三檔同步，`check-contract.py` exit 0、redocly valid
+（無）
 
 ## 待辦
-- [ ] **T25** 整合 Google + Apple 登入（2026-09-06 裁決：保留匿名＝訪客模式，Google/Apple 為升級綁定、
+- [ ] **T25**（#5） 整合 Google + Apple 登入（2026-09-06 裁決：保留匿名＝訪客模式，Google/Apple 為升級綁定、
   同一 UUID 延續；不開放自行註冊）。研究已完成：`docs/research/2026-09-06-supabase-anon-upgrade-native-oauth.md`
   （核心：升級只能用 `linkIdentityWithIdToken`、後端零改動）。spec 與施工票：`.scratch/t25-social-login/`
-- [ ] **T26** 免費公網部署供 tailnet 外手機測試（2026-09-06 裁決：**Cloud Run** asia-northeast1，
+  ＋票 02 順帶實測 `GET /v1/me` 的 `lastLoginAt`：綁定與重新登入是否刷新 `last_sign_in_at`（T30 契約措辭等這個定稿）
+- [ ] **T26**（#6） 免費公網部署供 tailnet 外手機測試（2026-09-06 裁決：**Cloud Run** asia-northeast1，
   唯一真免費＋東京本地；OCI 因 7 天閒置回收＋自管 VM 出局）。研究：`docs/research/2026-09-06-free-deploy-platforms.md`；
   runbook：`.scratch/t26-cloudrun/runbook.md`
   **2026-09-06 部署完成並驗收**：GCP 專案 `hapeetrail-test`（個人帳號）、
@@ -37,14 +24,14 @@
   **剩**：①commit＋push（Pages 才會更新）②通知夥伴換 base URL＋移除 ATS 例外 ③Mac 容器退役與否
   ④（可選）US$1 預算告警。
   ⚠️ 這是測試部署，不推翻 ADR-0011 的 Fly 生產決定；Cloud Run 若跑得順、要取代 T23 時另立 ADR 討論
-- [ ] **T29** Apple token 撤銷（註銷帳號時打 Apple `/auth/revoke`，App Store 對 SIWA 的要求）。
+- [ ] **T29**（#8） Apple token 撤銷（註銷帳號時打 Apple `/auth/revoke`，App Store 對 SIWA 的要求）。
   **blocked by T25**（.p8／Service ID 設定）；T28 契約日後加選填 `appleAuthorizationCode` 欄位
   （非破壞性）。送審前 T25＋T28＋T29 三者全關
-- [ ] **T27** 棄置匿名帳號清理策略（T25 裁決：MVP 不清）。官方無自動清理；設計時要一起想：
+- [ ] **T27**（#7） 棄置匿名帳號清理策略（T25 裁決：MVP 不清）。官方無自動清理；設計時要一起想：
   保留期限、被清帳號留下的便條歸屬（`notes.author_id` 連帶）、排程機制。等規模有感再動
-- [ ] **T20** 產品正名 Trailstamp → HapeeTrail：CLAUDE.md、openapi 標題、`supabase/config.toml` project_id、
+- [ ] **T20**（#2） 產品正名 Trailstamp → HapeeTrail：CLAUDE.md、openapi 標題、`supabase/config.toml` project_id、
   ADR／HANDOFF 標題、`docs/index.html`（`CONTEXT.md` 已定案）
-- [ ] **T23** 上線前的基礎設施收尾（T19 之後；沒有死線，夥伴串接期間服務跑在 Kevin 的 Mac 上）
+- [ ] **T23**（#3） 上線前的基礎設施收尾（T19 之後；沒有死線，夥伴串接期間服務跑在 Kevin 的 Mac 上）
   ① 綁 Fly 付款方式 → 票 10 剩餘 6 項（`fly apps create hapeetrail` → `fly secrets set` → `fly deploy --ha=false`
   → 真 GoTrue token 打 Fly 200 → `hosted-smoke.sh` 對 Fly 全綠）② 升 Supabase Pro（Free 閒置 7 天會暫停）
   ③ 契約三檔的 `servers`／`base_url` 從 tailnet MagicDNS 換成 Fly 網址 ④ 通知夥伴改 base URL。
@@ -52,7 +39,7 @@
   ⑤ **T28 留下的兩件事**：(a) ~~含 `hapeetrail.gotrue.timeout` 的 revision 部署~~
   ✅ 2026-09-24 revision 00004 上線、hosted-smoke 47/47 全綠；(b) 逾時值目前按 Cloud Run
   的 300s 請求上限挑的，上 Fly 前要照 Fly 的逾時重看一次
-- [ ] **T24** public schema 的 default privileges 收緊（ADR-0007 在新架構下的唯一靜默破口）
+- [ ] **T24**（#4） public schema 的 default privileges 收緊（ADR-0007 在新架構下的唯一靜默破口）
   Supabase 對 `public` 設了 default privileges：**新建的表預設 grant ALL、新建的函式預設 grant EXECUTE
   給 anon／authenticated**（`docker exec … psql` 實測：在交易內 `create table public.oops_t(i int)`
   之後，`role_table_grants` 立刻出現 anon／authenticated 兩列）。切換後 client 角色零權限是
@@ -64,11 +51,23 @@
   ⚠️ **範圍要含 `service_role`**（T28 票 05 複核發現，ADR-0014）：default privileges 也把新物件
   的全部權限給它，而服務為了註銷持有一把等同它的 secret key、且它 BYPASSRLS。
   `notes` 這一張已由 `20260923000000` 收回，往後的新物件仍要靠這張票根治
-- [ ] **T3** UGC 檢舉機制（App Store 審查前必須；T19 之後在 Java 實作，不再寫 `report_note` RPC）
+- [ ] **T3**（#1） UGC 檢舉機制（App Store 審查前必須；T19 之後在 Java 實作，不再寫 `report_note` RPC）
 
 ## 已完成
 
 （30 天內；更舊直接刪，git 歷史即檔案）
+
+- [x] **T30／T31／T32** 基本資料 `GET /v1/me`、更新檢查 `GET /v1/app/update`、功能總開關 `POST /v1/app/flags`
+  （issue #9／#10／#11）
+  ✅ 2026-10-05 三支完成並上線。spec 已歸檔：`docs/tasks/archive/profile-app-config/spec.md`
+  證據：commit `448293b`（＋`1fa92b9` T25 票 01、`a55f9f3`）；migration `20261005000000` 已 `db push`；
+  `cd api && ./mvnw test` **256 綠**（215＋41）；契約 **v4.2.0** 三檔同步、`check-contract.py` exit 0、redocly valid；
+  Cloud Run **revision 00005**（Kevin 手動部署）；hosted-smoke **47/47**；newman **23 請求／23 斷言 0 失敗**（含 4 個新 request）。
+  獨立複核「有條件通過」，A1（view 只投影純量、不露 email）／B1（強制蘊含有新版）／A3／措辭全部改入。
+  裁決：`/v1/app/*` 兩支**不需登入且忽略 Authorization**（Kevin）；`lastLoginAt` 匿名一律 null；`memberLevel` 固定 free。
+  **後續（不在本票）**：①SQL editor 把 `hapeetrail_private.app_versions` 的 ios 門檻改成真實值、按需 insert `feature_flags`
+  ②與夥伴約定 flag key 命名（建議 `區域.功能`）③`lastLoginAt` 的刷新時機併入 T25 票 02 實測
+  ④public 端點無限流（接受；被灌爆時上平台層 per-IP 限流）
 
 - [x] **T28** 登出立即失效＋註銷帳號 API（App Store 5.1.1(v) 的硬依賴）
   ✅ 2026-09-23 五張票全數完成。spec 與施工票已歸檔：`docs/tasks/archive/logout-account-deletion/`
