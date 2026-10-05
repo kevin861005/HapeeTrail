@@ -24,9 +24,10 @@ endpoint 的權威規格（path、header、request/response schema、錯誤格�
     **註銷帳號**則打 HapeeTrail 服務的 `DELETE /v1/me`（§1）——它是業務 API，不是 auth 路徑。
 - 業務請求**只帶一個 header**：`Authorization: Bearer <access_token>`。
   **apikey 不再出現在業務請求裡**——它只有 Supabase 的 auth 路徑需要。
+  例外：§7b 的兩支 App 設定端點**不需要任何 header**（帶了也會被忽略）。
 - 請求與回應的鍵名**都是 camelCase**（v3 請求端的 `p_` 參數名已消失），
   **座標兩端都是巢狀 `coordinate` 物件**，client 可以兩邊共用同一個型別。
-- 列表的 `limit`／`cursor` 是 **query 參數**；其餘端點的輸入都在 JSON body。
+- 列表的 `limit`／`cursor` 與更新檢查的 `version` 是 **query 參數**；其餘端點的輸入都在 JSON body。
   座標一律不進 URL（見 §10）。
 - 回應的時間戳格式**固定**為 `YYYY-MM-DDTHH:MM:SS.ffffffZ`——永遠六位小數、永遠 `Z`，
   不因秒數恰為整數而變動位數。
@@ -88,6 +89,33 @@ curl -X DELETE "$BASE/v1/me" -H "Authorization: Bearer $TOKEN"
 - **500**（沒有 `code`）＝伺服器端故障，稍後重試。通常代表帳號**沒有**被刪、同一張 token 仍可
   正常使用；但「刪除已生效、回應在回程遺失」也是 500，所以別把它當成「一定還在」的保證——
   照上面那條重試規則判斷（重試 204 ＝已註銷；401 且刷新失敗 ＝已註銷）。
+
+### 基本資料：`GET /v1/me`——打 HapeeTrail 服務
+
+```bash
+curl "$BASE/v1/me" -H "Authorization: Bearer $TOKEN"
+```
+
+**Profile**（恰好 6 鍵；鍵永遠都在，沒有值的是 `null`，不是缺鍵）：
+
+```json
+{ "id": "5f8f1c1e-…", "nickname": "Kevin Chen", "avatarUrl": "https://lh3.googleusercontent.com/…",
+  "loginMethod": "google", "lastLoginAt": "2026-10-01T02:03:04.123456Z", "memberLevel": "free" }
+```
+
+- `loginMethod`：`anonymous`（訪客，尚未綁定）、`google`、`apple`。綁了兩個以上取**最早綁定**的那個
+  （與 Supabase 自己算 `app_metadata.provider` 的規則相同）。日後新增登入方式＝新增值，
+  client 走 §9 的 default 分支。
+- `nickname`／`avatarUrl` 來自綁定身分的提供者：Google 兩者都有；Apple 沒有頭像、姓名也不在
+  id_token 裡（只有 client 第一次授權時拿得到），所以 Apple 使用者兩者可能都是 `null`。
+  訪客一律 `null`。**本服務沒有編輯端點**；旅人經 Supabase 改了 user metadata（各語言 SDK 的
+  updateUser）會反映在這裡——因此這兩個值是使用者自己可控的字串，只回給本人、伺服器不驗證。
+- `lastLoginAt`：Supabase 記錄的上次登入時間（GoTrue 的 `last_sign_in_at`）；**訪客一律 `null`**——
+  訪客就是「沒登入過」。哪些動作會刷新它（綁定、重新登入；token 刷新不會）以 T25 實測為準。
+- `memberLevel`：目前恆為 `free`，預留給日後的訂閱等級；新增值為非破壞性變更，client 遇到
+  不認得的值當 `free` 處理。
+- `id` ＝ token 的 `sub`，綁定帳號前後不變。
+- 這是唯一會回傳自己 uuid 的端點，而且只回給本人；便條上仍然永遠不顯示作者（§3）。
 
 ## 2. 錯誤：一個閘門，兩層分流
 
@@ -307,6 +335,47 @@ curl -G "$BASE/v1/me/notes" -H "Authorization: Bearer $TOKEN" \
   --data-urlencode "limit=50" --data-urlencode "cursor=eyJpIjogIjAzMDkyNWI2…"
 ```
 
+## 7b. App 設定：`GET /v1/app/update`／`POST /v1/app/flags`
+
+兩支都**不需要認證**：App 一啟動、還沒匿名登入或 token 已過期時就要打得到，所以
+`Authorization` 帶了也會被**忽略**——這兩支永遠不會因為 token 而 401（不必為它們走刷新流程）。
+判定都在伺服器——**client 不比版本、不猜開關**，調門檻或撥開關不需要發版。
+
+### 更新檢查
+
+```bash
+curl -G "$BASE/v1/app/update" --data-urlencode "version=1.2.0"      # 不需要 Authorization
+```
+
+**UpdateCheck**：
+
+```json
+{ "forceUpdate": false, "updateAvailable": true, "minimumVersion": "1.2.0", "latestVersion": "1.4.0" }
+```
+
+- `version` ＝ App 目前版本（iOS 的 CFBundleShortVersionString），1–4 段純數字以點分隔。
+  伺服器逐段按數值比、缺段補 0：`1.2` ＝ `1.2.0`、`1.9` < `1.10`。
+- `forceUpdate`：低於**最低相容版本**——必須更新才能繼續（建議擋在啟動畫面、導去 App Store）。
+- `updateAvailable`：低於**最新版**——可提示、不強制。`forceUpdate` 為 true 時它必然也是 true。
+- 兩個門檻原樣回傳，只供顯示（「最新版 1.4.0」），**不要拿來自己比**。
+- `version` 缺少或格式不合（`v1.2`、`1.2.0-beta`、空字串）→ 400 且**沒有 `code`**（§2）。
+- 目前只有 iOS，沒有平台參數；日後加平台是非破壞性變更。
+
+### 功能總開關
+
+```bash
+curl -X POST "$BASE/v1/app/flags" -H "Content-Type: application/json" \
+  -d '{"keys":["map.heatmap","notes.drop"]}'                          # 不需要 Authorization
+# → { "flags": { "map.heatmap": true, "notes.drop": false } }
+```
+
+- `keys`：想問的開關，0–50 個，每個 `A-Za-z0-9_.-` 1–64 字元（命名建議 `區域.功能`）。
+  缺少、不是字串陣列、或任一 key 不合 → 400 且**沒有 `code`**。重複的 key 合併。
+- **伺服器沒設定的 key 一律 `false`**——不是錯誤、不會缺鍵，可以放心問還不存在的 key；
+  因此 client 端的預設值也應該是「關」。空陣列 → `{"flags":{}}`。
+- 開關是全站的，不分使用者。回應包在 `flags` 裡（不是裸 map）：日後加欄位不是破壞性變更。
+- key 清單由雙方約定，不寫進 openapi.yaml（它們是設定不是契約）；有沒有設定都不影響 wire 形狀。
+
 ## 8. 錯誤碼表（凍結契約）
 
 完整 enum 見 openapi.yaml 的 `Problem` schema。**`code` 是唯一的判斷依據**；
@@ -391,6 +460,18 @@ curl -G "$BASE/v1/me/notes" -H "Authorization: Bearer $TOKEN" \
 > 此後一律 404。它們從來不屬於 v4 契約，也沒有 fallback 可留。
 
 ## 11. Changelog
+
+- 2026-10-05 **v4.2.0**（三支新端點＝非破壞性，minor bump）：
+  - **新增 `GET /v1/me`（基本資料）**：`id`、`nickname`、`avatarUrl`、`loginMethod`、`lastLoginAt`、
+    `memberLevel` 六鍵（§1）。訪客的 `nickname`／`avatarUrl`／`lastLoginAt` 為 null。
+  - **新增 `GET /v1/app/update?version=`（更新檢查）**：`forceUpdate`／`updateAvailable` 由伺服器判定，
+    附兩個門檻供顯示（§7b）。
+  - **新增 `POST /v1/app/flags`（功能總開關）**：逐 key 回布林，未設定的 key 為 false（§7b）。
+  - 上述兩支 App 設定端點**不需要認證**，`Authorization` 帶了也被忽略——是本契約第一組
+    不帶 Bearer 的業務路徑（§7b）。`GET /v1/me` 照常要 Bearer。
+  - 共同約定補一句：`version` 是第三個 query 參數（與 `limit`／`cursor` 同類）。
+  **完全沒變的**：14 個錯誤 token（零新增）、Note／NearbyHint 的鍵、既有 envelope、時間戳格式、
+  所有常數。
 
 - 2026-09-23 **v4.1.1**（措辭修正，wire 行為不變）：
   - `DELETE /v1/me` 的 **500 語意改為不保證**：原文寫「帳號沒有被刪」，但「刪除已生效、

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "4.1.1"
+  version: "4.2.0"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/HapeeTrail
@@ -18,7 +18,11 @@ info:
     被登出的 session 已簽發、尚未過期的 access token 打本服務一律 401（見 `Unauthorized`）。
     前提是登出請求真的抵達 Supabase：離線時、或送出時 access token 已過期的登出，伺服器端的
     session 沒有被終止，殘留的 token 在過期前仍然有效（notes.md §1）。
-    **註銷帳號**則打本服務的 `DELETE /v1/me`。
+    **註銷帳號**則打本服務的 `DELETE /v1/me`；**基本資料**（暱稱、頭像、登入方式…）是 `GET /v1/me`。
+
+    **App 設定**（v4.2.0 起）：`GET /v1/app/update` 更新檢查（強制／有新版由伺服器判定）、
+    `POST /v1/app/flags` 功能總開關（逐 key 回布林）。**兩支都不需要認證**——App 一啟動、
+    還沒匿名登入或 token 已過期時就能打；`Authorization` 帶了也會被忽略，永遠不會因為 token 而 401。
 
     **業務請求只帶一個 header**：`Authorization: Bearer <access_token>`（來自匿名登入）。
     apikey 只有 Supabase 的 auth 路徑需要，不再是業務 API 的一部分。
@@ -47,7 +51,9 @@ tags:
   - name: notes
     description: 便條核心循環（留下／發現／撿起／我的列表）
   - name: account
-    description: 帳號（註銷）
+    description: 帳號（基本資料、註銷）
+  - name: app
+    description: App 設定（更新檢查、功能總開關）；**不需要認證**；判定在伺服器，調整不需要發版
   - name: ops
     description: 營運端點（健康檢查；不需認證）
 
@@ -419,6 +425,31 @@ paths:
           $ref: "#/components/responses/Unauthorized"
 
   /v1/me:
+    get:
+      tags: [account]
+      operationId: me
+      summary: 基本資料（頭像、暱稱、登入方式、上次登入時間、會員等級）
+      description: |
+        呼叫者自己的基本資料，對象只來自 Bearer token 的 `sub`；沒有參數。
+        六個鍵**永遠都在**，沒有值的是 `null`（不是缺鍵）。
+
+        - `loginMethod`：`anonymous`（訪客，尚未綁定）、`google`、`apple`。綁了兩個以上取**最早綁定**
+          的那個（與 Supabase 自己算 `app_metadata.provider` 的規則相同）。日後新增登入方式＝新增值，
+          client 遇到不認得的值走預設分支（notes.md §9）。
+        - `nickname`／`avatarUrl`：綁定身分的提供者給的（Google 有姓名與頭像；Apple 沒有頭像、
+          姓名也不在 id_token 裡），訪客兩者皆 `null`。本服務沒有編輯端點；經 Supabase 改了
+          user metadata 會反映在這裡（使用者自己可控的字串，只回給本人、伺服器不驗證）。
+        - `lastLoginAt`：Supabase 記錄的上次登入時間（`last_sign_in_at`）；**訪客一律 `null`**。
+        - `memberLevel`：目前恆為 `free`，預留給日後的訂閱等級；新增值為非破壞性變更。
+      responses:
+        "200":
+          description: 基本資料
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
     delete:
       tags: [account]
       operationId: deleteMe
@@ -455,6 +486,76 @@ paths:
                 type: about:blank
                 status: 500
                 title: Internal Server Error
+
+  /v1/app/update:
+    get:
+      tags: [app]
+      operationId: checkUpdate
+      summary: 更新檢查（強制更新／有新版，由伺服器判定）
+      description: |
+        把 App 目前的版本交給伺服器判定：低於**最低相容版本**＝`forceUpdate: true`（必須更新才能
+        繼續使用）；低於**最新版**＝`updateAvailable: true`（可提示、不強制；`forceUpdate` 為 true 時
+        它必然也是 true）。兩個門檻原樣回傳只供顯示——**client 不要自己比版本**，調門檻不需要發版。
+
+        `version`：1–4 段純數字以點分隔（`1.2`、`1.2.3`、`1.2.3.4`），伺服器逐段按數值比較、
+        缺段補 0（`1.2` ＝ `1.2.0`，`1.9` < `1.10`）。缺少或格式不合（`v1.2`、`1.2.0-beta`、空字串）
+        → 400 且**沒有 `code`**。目前只有 iOS 一個平台，沒有平台參數；日後加平台為非破壞性變更。
+
+        **不需要認證**：App 啟動第一件事就能打，不必先匿名登入；`Authorization` 帶了也會被忽略
+        （過期或已登出的 token 不會讓這支 401）。
+      security: []
+      parameters:
+        - name: version
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^\d{1,9}(\.\d{1,9}){0,3}$'
+            example: "1.2.0"
+          description: App 目前的版本（iOS 的 CFBundleShortVersionString）
+      responses:
+        "200":
+          description: 判定結果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateCheck"
+        "400":
+          $ref: "#/components/responses/FormatBadRequest"
+
+  /v1/app/flags:
+    post:
+      tags: [app]
+      operationId: featureFlags
+      summary: 功能總開關（逐 key 回 true／false）
+      description: |
+        把想知道的開關 key 一次送來，伺服器逐 key 回布林。**伺服器沒設定的 key 一律 `false`**
+        （不是錯誤、也不會缺鍵），所以可以放心問還不存在的 key——client 端的預設值也應該是「關」。
+        重複的 key 合併。開關是**全站**的，不分使用者；判定在伺服器，撥動不需要發版。
+
+        key 由雙方約定、不寫進本契約（它們是設定不是契約）；命名建議 `區域.功能`（如 `map.heatmap`）。
+        字元集 `A-Za-z0-9_.-`、1–64 字元、一次最多 50 個；不合（含 `keys` 缺少、不是字串陣列）
+        → 400 且**沒有 `code`**。回應包在 `flags` 物件裡而不是裸 map：日後加欄位不是破壞性變更。
+
+        **不需要認證**（同 `/v1/app/update`）：`Authorization` 帶了也會被忽略。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FlagsRequest"
+            example: { keys: [map.heatmap, notes.drop] }
+      responses:
+        "200":
+          description: 每個問到的 key 一個布林
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlagsResult"
+              example: { flags: { map.heatmap: true, notes.drop: false } }
+        "400":
+          $ref: "#/components/responses/FormatBadRequest"
 
   /actuator/health:
     get:
@@ -538,6 +639,17 @@ components:
             status: 401
             title: not_authenticated
             code: not_authenticated
+    FormatBadRequest:
+      description: |
+        型別／格式錯誤（缺必填、型別不對、格式不合）。problem+json、**沒有 `code`**——不是業務錯誤。
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: about:blank
+            status: 400
+            title: Bad Request
     ListBadRequest:
       description: |
         `invalid_cursor`——無法解碼、被竄改、或不屬於本 endpoint 的排序。
@@ -722,6 +834,90 @@ components:
             下一頁的游標（見 Cursor schema，原樣回傳即可）。
             **null ＝ 沒有更多**，這是唯一的終止訊號；伺服器保證非 null 時確實還有資料，
             client 不需要為了確認結束多打一次空頁。
+
+    Profile:
+      type: object
+      description: 呼叫者的基本資料（`GET /v1/me`）。六鍵永遠都在，沒有值的是 null。
+      required: [id, nickname, avatarUrl, loginMethod, lastLoginAt, memberLevel]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 使用者 id（＝ token 的 `sub`；綁定帳號前後不變）。只回給本人。
+        nickname:
+          type: string
+          nullable: true
+          example: Kevin Chen
+          description: 綁定身分提供的姓名；訪客、或提供者沒給（Apple）時為 null
+        avatarUrl:
+          type: string
+          format: uri
+          nullable: true
+          example: https://lh3.googleusercontent.com/a/default-user
+          description: 綁定身分提供的頭像網址（Google 有、Apple 沒有）；訪客為 null
+        loginMethod:
+          type: string
+          example: anonymous
+          description: |
+            登入方式：`anonymous`（訪客）、`google`、`apple`。綁了多個取最早綁定的那個。
+            日後新增值為非破壞性變更（client 走預設分支）。
+        lastLoginAt:
+          type: string
+          format: date-time
+          pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$'
+          nullable: true
+          example: "2026-10-01T02:03:04.123456Z"
+          description: 格式同 Timestamp；Supabase 記錄的上次登入時間（token 刷新不算）。**訪客一律 null**。
+        memberLevel:
+          type: string
+          example: free
+          description: 會員等級，目前恆為 `free`（預留給訂閱）；日後新增值為非破壞性變更，不認得的當 `free`。
+
+    UpdateCheck:
+      type: object
+      description: 更新檢查的判定（`GET /v1/app/update`）。兩個判定給流程用，兩個門檻只供顯示。
+      required: [forceUpdate, updateAvailable, minimumVersion, latestVersion]
+      properties:
+        forceUpdate:
+          type: boolean
+          description: 低於最低相容版本——必須更新才能繼續使用
+        updateAvailable:
+          type: boolean
+          description: 低於最新版——可提示、不強制。forceUpdate 為 true 時必然也是 true
+        minimumVersion:
+          type: string
+          example: "1.2.0"
+          description: 最低相容版本（顯示用；不要拿來自己比）
+        latestVersion:
+          type: string
+          example: "1.4.0"
+          description: 最新版（顯示用；不要拿來自己比）
+
+    FlagsRequest:
+      type: object
+      description: 功能總開關的請求（`POST /v1/app/flags`）
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          maxItems: 50
+          description: 想問的開關 key；0–50 個，重複合併
+          items:
+            type: string
+            pattern: '^[A-Za-z0-9_.-]{1,64}$'
+            example: map.heatmap
+
+    FlagsResult:
+      type: object
+      description: 功能總開關的回應。包在 `flags` 裡（不是裸 map）：日後加欄位才不是破壞性變更
+      required: [flags]
+      properties:
+        flags:
+          type: object
+          description: 問到的每個 key 一個布林；伺服器沒設定的 key 為 false
+          additionalProperties:
+            type: boolean
+          example: { map.heatmap: true, notes.drop: false }
 
     Session:
       type: object

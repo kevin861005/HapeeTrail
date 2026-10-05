@@ -4,6 +4,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse.BodyHandlers;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
@@ -43,12 +44,13 @@ class SmokeTest extends SupabaseDbTest {
 	 * 由映像自帶，auth.sessions 由 GoTrue 建（這裡是 {@link SupabaseDbTest} 補的等價表），
 	 * postgis 則要能裝進 extensions schema。
 	 * 少了任何一項就在這裡直說，不要變成後面某支測試看不懂的 FK 或權限錯誤。
+	 * 「auth.users 一開始是空的」不在這裡問：它只在 JVM 第一個測試插列之前成立，
+	 * 放這裡等於依賴本類別最先跑——改由 {@link SupabaseDbTest} 在底座啟動時問一次。
 	 */
 	@Test
 	void migrationPrerequisitesArePresent() {
 		assertThat(adminQueryBoolean("select to_regclass('auth.users') is not null")).isTrue();
 		assertThat(adminQueryBoolean("select to_regclass('auth.sessions') is not null")).isTrue();
-		assertThat(adminQueryBoolean("select count(*) = 0 from auth.users")).isTrue();
 		assertThat(adminQueryBoolean("select to_regprocedure('auth.uid()') is not null")).isTrue();
 		assertThat(adminQueryBoolean("select count(*) = 2 from pg_roles"
 				+ " where rolname in ('anon', 'authenticated')")).isTrue();
@@ -79,6 +81,13 @@ class SmokeTest extends SupabaseDbTest {
 		assertThat(queryBoolean("select has_table_privilege('hapeetrail_private.auth_sessions', 'select')")).isTrue();
 		assertThat(queryBoolean("select has_table_privilege('hapeetrail_private.auth_sessions',"
 				+ " 'insert, update, delete, truncate')")).isFalse();
+		// T30–T32 的三個物件（基本資料 view、版本門檻、功能開關）同樣只讀：設定由 SQL editor 改。
+		for (String object : List.of("hapeetrail_private.auth_users", "hapeetrail_private.app_versions",
+				"hapeetrail_private.feature_flags")) {
+			assertThat(queryBoolean("select has_table_privilege('" + object + "', 'select')")).isTrue();
+			assertThat(queryBoolean("select has_table_privilege('" + object + "', 'insert, update, delete, truncate')"))
+				.isFalse();
+		}
 		// RLS 不關（notes_select_own 保留休眠），全列放行只給這個角色。
 		assertThat(adminQueryBoolean("select relrowsecurity from pg_class where oid = 'public.notes'::regclass")).isTrue();
 	}
@@ -101,9 +110,10 @@ class SmokeTest extends SupabaseDbTest {
 		// schema 本身的 CREATE——拿得到就能自己造一個帶 default privileges 的物件
 		assertThat(adminQueryBoolean("select bool_and(not has_schema_privilege(r, 'public', 'create'))"
 				+ " from unnest(array['anon', 'authenticated']) r")).isTrue();
-		// 服務自己的 schema（ADR-0013 的 session view）：client 角色連門都進不去
+		// 服務自己的 schema（ADR-0013 的 session view、T30–T32 的三個物件）：client 角色連門都進不去，
+		// service_role 也一樣（ADR-0014 的爆炸半徑；這個 schema 沒有 default privileges）
 		assertThat(adminQueryBoolean("select bool_and(not has_schema_privilege(r, 'hapeetrail_private', 'usage'))"
-				+ " from unnest(array['anon', 'authenticated']) r")).isTrue();
+				+ " from unnest(array['anon', 'authenticated', 'service_role']) r")).isTrue();
 	}
 
 	/**

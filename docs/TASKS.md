@@ -4,7 +4,20 @@
 
 ## 進行中
 
-（無）
+- [ ] **T30** 基本資料 API `GET /v1/me`（2026-10-05 與夥伴議定：頭像、暱稱、登入方式、上次登入時間、
+  會員等級預留）。**實作完成 2026-10-05、未 commit**：`api/.../account/AccountController.java`（`me()`）、
+  view `hapeetrail_private.auth_users`（migration `20261005000000`）、`ProfileTest` 6 支。
+  獨立複核有條件通過，必修項已改（view 只投影純量、不露 email）。spec：`.scratch/t30-32-profile-app-config/spec.md`
+  **剩**：commit → db push → Cloud Run 部署 → hosted-smoke／newman → `lastLoginAt` 語意等 T25 票 02 實測定稿
+- [ ] **T31** 更新檢查 API `GET /v1/app/update?version=`（強制＝低於最低相容版本；另回最新版與兩個門檻；
+  **不需登入**，App 啟動即可打）。
+  **實作完成 2026-10-05、未 commit**：`api/.../app/AppController.java`、表 `hapeetrail_private.app_versions`
+  （SQL editor 改、不重部署；migration 先塞 ios 1.0.0/1.0.0）、`AppTest`。**剩**：同 T30 的部署四步＋把門檻改成真實值
+- [ ] **T32** 功能總開關 API `POST /v1/app/flags`（client 傳 key 陣列，逐 key 回 true/false；未知 key＝false；
+  **不需登入**）。
+  **實作完成 2026-10-05、未 commit**：同 `AppController.java`、表 `hapeetrail_private.feature_flags`、`AppTest`。
+  **剩**：同 T30 的部署四步；與夥伴約定 key 命名（建議 `區域.功能`）
+  共同證據：`cd api && ./mvnw test` **256 綠**（215＋41）；契約 v4.2.0 三檔同步，`check-contract.py` exit 0、redocly valid
 
 ## 待辦
 - [ ] **T25** 整合 Google + Apple 登入（2026-09-06 裁決：保留匿名＝訪客模式，Google/Apple 為升級綁定、

@@ -28,8 +28,12 @@ import org.springframework.security.oauth2.jwt.JwtClaimValidator;
 import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
 import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 
 @Configuration
 class SecurityConfig {
@@ -46,24 +50,41 @@ class SecurityConfig {
 	private static final String SERVER_ERROR = """
 			{"type":"about:blank","status":500,"title":"Internal Server Error"}""";
 
+	/** App 層設定（更新檢查、功能開關，T31／T32）：不需要登入——App 一啟動就要打得到。 */
+	private static final String APP_SETTINGS = "/v1/app/**";
+
 	@Bean
 	SecurityFilterChain apiSecurity(HttpSecurity http) throws Exception {
 		AuthenticationEntryPoint entryPoint = SecurityConfig::writeNotAuthenticated;
 		return http
 			.authorizeHttpRequests((requests) -> requests
-				.requestMatchers("/actuator/health").permitAll()
+				.requestMatchers("/actuator/health", APP_SETTINGS).permitAll()
 				.anyRequest().authenticated())
 			// 這個 entry point 也接管「完全沒帶 header」的請求：resource server 是本鏈唯一
 			// 註冊 entry point 的 configurer，ExceptionHandlingConfigurer 因此拿它當預設值
 			// （沒有它就是 Http403ForbiddenEntryPoint ⇒ 403 而不是契約要的 401）。
 			// 哪天多了第二個 configurer，everythingElseNeedsAToken 會立刻紅。
 			.oauth2ResourceServer((oauth2) -> oauth2
+				.bearerTokenResolver(ignoringAppSettings())
 				.authenticationEntryPoint(entryPoint)
 				.jwt((jwt) -> jwt.jwtAuthenticationConverter(subjectRequired())))
 			// bearer token API：沒有 session、沒有表單，csrf 沒有攻擊面也沒有 token 可帶。
 			.csrf(AbstractHttpConfigurer::disable)
 			.sessionManagement((session) -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 			.build();
+	}
+
+	/**
+	 * permitAll 只放行「沒有 token」的請求：resource server 的 filter 對每個請求都會先解析
+	 * Authorization，帶了壞 token（過期、已登出）照樣 401——而 iOS 共用的 HTTP client 很可能帶著
+	 * 過期 token 打更新檢查，那正是「啟動時先問要不要強制更新」的情境。所以這兩條路徑連 header
+	 * 都不看：有沒有、好不好都一樣，也不會為它查一次 session（ADR-0013）。
+	 * 用同一個 PathPattern 判斷，與上面的 permitAll 不會各自解讀路徑。
+	 */
+	private static BearerTokenResolver ignoringAppSettings() {
+		RequestMatcher appSettings = PathPatternRequestMatcher.withDefaults().matcher(APP_SETTINGS);
+		DefaultBearerTokenResolver delegate = new DefaultBearerTokenResolver();
+		return (request) -> appSettings.matches(request) ? null : delegate.resolve(request);
 	}
 
 	/**

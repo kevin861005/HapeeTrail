@@ -73,13 +73,25 @@ abstract class SupabaseDbTest {
 				+ " create table auth.sessions (id uuid primary key,"
 				+ " user_id uuid not null references auth.users (id) on delete cascade);"
 				+ " alter table auth.sessions enable row level security;"
-				+ " grant select on auth.sessions to postgres with grant option\"");
+				+ " grant select on auth.sessions to postgres with grant option;"
+				// auth.identities 同理（T30 的 view 讀它）：GoTrue 綁定身分時寫進去的那一列。
+				// ponytail: 只取 view 用到的欄位（provider／identity_data／created_at）＋ FK cascade。
+				+ " create table auth.identities (id uuid primary key default gen_random_uuid(),"
+				+ " user_id uuid not null references auth.users (id) on delete cascade,"
+				+ " provider text not null, identity_data jsonb not null,"
+				+ " created_at timestamptz not null default now());"
+				+ " alter table auth.identities enable row level security;"
+				+ " grant select on auth.identities to postgres with grant option\"");
 		// ponytail: 用映像內的 psql 套 migration，不用 Java 端的 SQL 切割器——
 		// migration 裡滿是 $$ 函式本體，切錯就是難查的假紅。
 		exec(db, "set -e; for f in /migrations/*.sql; do "
 				+ "psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres -f \"$f\"; done");
 		exec(db, "psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres "
 				+ "-c \"alter role " + API_ROLE + " password '" + API_PASSWORD + "'\"");
+		// 映像不該自帶任何使用者（有的話會與測試造的列混在一起）。在任何測試插列之前問一次：
+		// 以前放在 SmokeTest 裡，等於依賴它是 JVM 裡第一個跑的類別，新增測試類別就翻車（2026-10-05）。
+		exec(db, "test \"$(psql -qtA -U postgres -d postgres -c 'select count(*) from auth.users')\" = 0"
+				+ " || { echo 'auth.users 不是空的：映像自帶了使用者' >&2; exit 1; }");
 		return db;
 	}
 

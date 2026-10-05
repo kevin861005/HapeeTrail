@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "HapeeTrail Notes API",
-    "description": "第一階段便條 API（契約 v4）。搭配 local.postman_environment.json 或 hosted.postman_environment.json 使用。\n\n依資料夾順序執行即為完整流程：旅人 A 留便條（含只給自己看的旅遊紀錄）→ 旅人 B 發現並撿起 → 收藏 → 旅人 C 登入即註銷（`DELETE /v1/me`）。\n\n旅人 C 是專為註銷示範開的帳號，A、B 不受影響：每輪淨留下的匿名帳號數不變，但匿名註冊從每輪 2 次變 3 次（Supabase 預設 30 次/小時/IP，連跑多輪時注意）。\nsignup 請求的 Tests script 會自動把 access_token 寫回 environment，不需手動貼 token。\n\n**兩個 base URL**：業務端點打 {{base_url}}（HapeeTrail 服務）；匿名登入打 {{supabase_url}}（Supabase GoTrue），且只有它需要 apikey。\n\n**錯誤斷言看的是 RFC 9457 problem+json**：HTTP 狀態碼有語意（400/401/403/404/409/422/429），body 的 `code` 是唯一的判斷依據，`details` 是真的物件（v3 的「字串需二次解析」已消失）。\n\n每輪由「匿名登入（A）」的 Pre-request script 隨機挑一個地點，所有座標都由它算出，因此可以反覆執行而不互相干擾——API 沒有刪除便條的路徑，固定座標會讓歷次殘留的便條累積在同一處，滿 20 張後就把本輪的目標便條擠出 nearby 的「最近 20 筆」。\n\nwire format 權威：docs/api/openapi.yaml；語意規則：docs/api/notes.md。",
+    "description": "第一階段便條 API（契約 v4）。搭配 local.postman_environment.json 或 hosted.postman_environment.json 使用。\n\n依資料夾順序執行即為完整流程：旅人 A 登入後先看基本資料、更新檢查、功能開關（v4.2.0 的三支），再留便條（含只給自己看的旅遊紀錄）→ 旅人 B 發現並撿起 → 收藏 → 旅人 C 登入即註銷（`DELETE /v1/me`）。\n\n旅人 C 是專為註銷示範開的帳號，A、B 不受影響：每輪淨留下的匿名帳號數不變，但匿名註冊從每輪 2 次變 3 次（Supabase 預設 30 次/小時/IP，連跑多輪時注意）。\nsignup 請求的 Tests script 會自動把 access_token 寫回 environment，不需手動貼 token。\n\n**兩個 base URL**：業務端點打 {{base_url}}（HapeeTrail 服務）；匿名登入打 {{supabase_url}}（Supabase GoTrue），且只有它需要 apikey。\n\n**錯誤斷言看的是 RFC 9457 problem+json**：HTTP 狀態碼有語意（400/401/403/404/409/422/429），body 的 `code` 是唯一的判斷依據，`details` 是真的物件（v3 的「字串需二次解析」已消失）。\n\n每輪由「匿名登入（A）」的 Pre-request script 隨機挑一個地點，所有座標都由它算出，因此可以反覆執行而不互相干擾——API 沒有刪除便條的路徑，固定座標會讓歷次殘留的便條累積在同一處，滿 20 張後就把本輪的目標便條擠出 nearby 的「最近 20 筆」。\n\nwire format 權威：docs/api/openapi.yaml；語意規則：docs/api/notes.md。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -57,6 +57,126 @@
             ],
             "body": { "mode": "raw", "raw": "{}" },
             "url": { "raw": "{{supabase_url}}/auth/v1/signup", "host": ["{{supabase_url}}"], "path": ["auth", "v1", "signup"] }
+          }
+        },
+        {
+          "name": "基本資料 GET /v1/me",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 + Profile 六鍵；剛匿名登入 ⇒ anonymous、三個 null、free', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.all.keys('id','nickname','avatarUrl','loginMethod','lastLoginAt','memberLevel');",
+                  "  pm.expect(body.loginMethod).to.eql('anonymous');",
+                  "  pm.expect(body.nickname).to.be.null;",
+                  "  pm.expect(body.avatarUrl).to.be.null;",
+                  "  pm.expect(body.lastLoginAt, '訪客＝沒登入過').to.be.null;",
+                  "  pm.expect(body.memberLevel).to.eql('free');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/me", "host": ["{{base_url}}"], "path": ["v1", "me"] }
+          }
+        },
+        {
+          "name": "更新檢查 GET /v1/app/update?version=1.0.0",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200（不帶 Authorization）+ UpdateCheck 四鍵；判定是布林、門檻是版本字串', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.all.keys('forceUpdate','updateAvailable','minimumVersion','latestVersion');",
+                  "  pm.expect(body.forceUpdate).to.be.a('boolean');",
+                  "  pm.expect(body.updateAvailable).to.be.a('boolean');",
+                  "  if (body.forceUpdate) pm.expect(body.updateAvailable, '強制必然也有新版').to.be.true;",
+                  "  pm.expect(body.minimumVersion).to.match(/^\\d+(\\.\\d+){0,3}$/);",
+                  "  pm.expect(body.latestVersion).to.match(/^\\d+(\\.\\d+){0,3}$/);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/app/update?version=1.0.0",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "app", "update"],
+              "query": [{ "key": "version", "value": "1.0.0" }]
+            }
+          }
+        },
+        {
+          "name": "錯誤示範：version 格式不合 → 400 沒有 code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('400 problem+json 且沒有 code（型別／格式錯誤，不是業務錯誤）', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  pm.expect(pm.response.json()).to.not.have.property('code');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/app/update?version=v1.2.0-beta",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "app", "update"],
+              "query": [{ "key": "version", "value": "v1.2.0-beta" }]
+            }
+          }
+        },
+        {
+          "name": "功能開關 POST /v1/app/flags",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200（不帶 Authorization）+ flags 物件；問的每個 key 都有布林，沒設定的是 false', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.all.keys('flags');",
+                  "  pm.expect(body.flags).to.have.all.keys('map.heatmap','nobody.set.this');",
+                  "  pm.expect(body.flags['map.heatmap']).to.be.a('boolean');",
+                  "  pm.expect(body.flags['nobody.set.this'], '沒設定的 key').to.be.false;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"keys\":[\"map.heatmap\",\"nobody.set.this\"]}" },
+            "url": { "raw": "{{base_url}}/v1/app/flags", "host": ["{{base_url}}"], "path": ["v1", "app", "flags"] }
           }
         },
         {

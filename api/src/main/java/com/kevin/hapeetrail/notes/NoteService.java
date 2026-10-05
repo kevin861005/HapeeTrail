@@ -5,7 +5,6 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +13,7 @@ import java.util.function.Function;
 import java.util.regex.Pattern;
 
 import com.kevin.hapeetrail.config.ApiException;
+import com.kevin.hapeetrail.config.Wire;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -55,9 +55,8 @@ public class NoteService {
 	private static final Pattern EDGE_WHITESPACE = Pattern
 		.compile("^[\\p{IsWhite_Space}\\x{1C}-\\x{1F}]+|[\\p{IsWhite_Space}\\x{1C}-\\x{1F}]+\\z");
 
-	/** 契約的時間戳格式：永遠六位小數、永遠 {@code Z}，不因秒數恰為整數而縮水。 */
-	private static final DateTimeFormatter WIRE_TS = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'")
-		.withZone(ZoneOffset.UTC);
+	/** 契約的時間戳格式（{@link Wire#TIMESTAMP}；基本資料的 {@code lastLoginAt} 用同一份）。 */
+	private static final DateTimeFormatter WIRE_TS = Wire.TIMESTAMP;
 
 	private static final String WIRE_COLUMNS = "id, content, color, style, audience, lat, lng, created_at,"
 			+ " picked_up_at";

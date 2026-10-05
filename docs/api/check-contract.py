@@ -85,7 +85,9 @@ def spec_keys(schema: str) -> list[str]:
 print("③ 資料形狀的鍵名（openapi schema ↔ notes.md JSON 範例）")
 for schema, anchor in [("Note", r"\*\*Note\*\*"),
                        ("NearbyHint", r"\*\*NearbyHint\*\*"),
-                       ("NotePage", r"兩支都回傳 envelope：")]:
+                       ("NotePage", r"兩支都回傳 envelope："),
+                       ("Profile", r"\*\*Profile\*\*"),
+                       ("UpdateCheck", r"\*\*UpdateCheck\*\*")]:
     check(f"{schema} 鍵名", notes_json_keys(anchor), spec_keys(schema))
 
 # ── postman collection ───────────────────────────────────────────────────────
@@ -119,7 +121,7 @@ for token, statuses in sorted(collection_pairs.items()):
 collection_keysets = [sorted(re.findall(r"'([A-Za-z]+)'", m))
                       for m in re.findall(r"have\.all\.keys\(([^)]*)\)",
                                           json.dumps(COLLECTION, ensure_ascii=False))]
-for schema in ("Note", "NearbyHint", "NotePage"):
+for schema in ("Note", "NearbyHint", "NotePage", "Profile", "UpdateCheck"):
     want = spec_keys(schema)
     check(f"collection 有一組 have.all.keys 等於 {schema}",
           want if want in collection_keysets else collection_keysets, want)
