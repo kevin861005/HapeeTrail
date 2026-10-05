@@ -41,7 +41,8 @@
 
 ## 文件地圖
 - 產品路線圖與各階段範圍：docs/roadmap.md
-- App 版本對照（最新版、最低支援版、更新資訊、發版流程）：docs/app-versions.md
+- App 版本（最新版、最低支援版、更新資訊、發版 checklist）：GitHub Project 看板的「版本歷史」View，
+  一版一張「版本」issue（範本 .github/ISSUE_TEMPLATE/release.md）；門檻真實值在 hapeetrail_private.app_versions
 - 重大決策紀錄：docs/adr/（編號遞增）；後端 Java 化見 ADR-0011
 - 後端全換 Java（T19，2026-08-27 完工切換）的 spec 與施工票已歸檔：
   docs/tasks/archive/java-rewrite/（spec.md、issues/、README.md 施工順序表）
