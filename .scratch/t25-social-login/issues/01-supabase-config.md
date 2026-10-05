@@ -10,20 +10,29 @@
 
 ## Google Cloud Console
 
-- [ ] 建 **Web application** 類型 OAuth Client ID（給 Supabase 伺服器端驗 id_token）
-- [ ] 建 **iOS** 類型 OAuth Client ID（填 Bundle ID）
+- [x] 建 **Web application** 類型 OAuth Client ID ✅ 2026-09-06（專案 `hapeetrail-test`，
+      redirect URI 已加 Supabase callback）：
+      `134868178961-6sfrod5c5a158j1c77lrhbd4k8mmrful.apps.googleusercontent.com`
+- [x] 建 **iOS** 類型 OAuth Client ID（Bundle ID `tw.com.rrrrrwei.HapeeTrail`）✅ 2026-09-06：
+      `134868178961-ke5tqllirfgm1515013pggqo3o3dgkpe.apps.googleusercontent.com`
+- [x] 同意畫面：External、Testing 模式、test users 已加（Kevin＋夥伴）；
+      **刻意不傳 logo**（傳了就要送審）、隱私權/ToS 連結留待上架前
 
 ## Supabase Dashboard（Authentication → Providers）
 
-- [ ] **Apple**：啟用；Client IDs 填 Bundle ID
-- [ ] **Google**：啟用；Client IDs 填「Web Client ID, iOS Client ID」（逗號分隔，Web 在前）；
-      打開 **Skip nonce check**（Google 原生 SDK 的 id_token 不帶雜湊 nonce，不開必炸）
-- [ ] **Email**：停用（這就是「不開放自助註冊」的正確落點）
-- [ ] **Anonymous**：確認仍啟用
-- [ ] **「Allow new users to sign up」保持開啟**——關了連匿名一起死（研究檔 Q5，原始碼證據）
-- [ ] 「Enable Manual Linking」：**先不動**，票 02 兩態實測後再定案要不要開
+- [x] **Apple**：啟用；Client IDs = `tw.com.rrrrrwei.HapeeTrail`，其餘欄位留空 ✅ 2026-09-06
+- [x] **Google**：啟用；Client IDs =「Web, iOS」逗號分隔（值見上方 Google 段）；
+      **Skip nonce check 已開**；secret 留空 ✅ 2026-09-06
+- [x] **Email**：停用 ✅ 2026-09-06
+- [x] **Anonymous**：維持啟用 ✅
+- [x] **「Allow new users to sign up」維持開啟** ✅（settings 實測 `disable_signup: false`）
+- [x] 「Enable Manual Linking」：**維持關閉**，票 02 兩態實測後定案 ✅
 
-## 驗收
+## 驗收 ✅ 2026-09-06（curl 對真 hosted）
 
-- 每個開關的最終狀態抄錄回本票（dashboard 撥完要按 Save 才生效——T2 踩過的坑）
-- `curl` 匿名登入一次確認沒被誤傷
+- `GET /auth/v1/settings`：`{google: True, apple: True, email: False, anonymous_users: True}`、
+  `disable_signup: False`
+- email/password 註冊 → **400 `email_provider_disabled`**（＝spec 驗收 4 的「被擋」半，提前收掉）
+- 匿名登入對照組 → access_token 正常取得
+
+**票 01 剩最後一項：Apple Developer 的 capability（見上方 Apple Developer 段，待確認帳號歸屬）**
