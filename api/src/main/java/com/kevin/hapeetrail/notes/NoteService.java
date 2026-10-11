@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
-import java.util.regex.Pattern;
 
 import com.kevin.hapeetrail.config.ApiException;
 import com.kevin.hapeetrail.config.Wire;
@@ -40,20 +39,6 @@ public class NoteService {
 	 * 共用的唯一來源——散成幾份常數遲早漂移，症狀是「地圖上看不到但額度還被佔著」。
 	 */
 	static final Duration TTL = Duration.ofDays(90);
-
-	/**
-	 * trim 的字元集＝Unicode {@code White_Space} ＋ U+001C–U+001F（契約 §4 逐字）。
-	 *
-	 * <p>刻意兩個都不用：{@code Character.isWhitespace} 少了 NBSP、U+2007、U+202F；
-	 * Java 的 {@code \s} 只認 ASCII。兩者都會與契約分歧，而分歧的症狀是
-	 * 「app 預檢說可以送、伺服器回 content_empty」。
-	 *
-	 * <p>結尾用 {@code \z} 而不是 {@code $}：後者在 Java 也匹配「最後一個換行之前」，
-	 * 語意與 Postgres 的 {@code $}（純字串結尾）不同。頭尾之外不動——多行內容中間那幾行的
-	 * 縮排是內容的一部分。
-	 */
-	private static final Pattern EDGE_WHITESPACE = Pattern
-		.compile("^[\\p{IsWhite_Space}\\x{1C}-\\x{1F}]+|[\\p{IsWhite_Space}\\x{1C}-\\x{1F}]+\\z");
 
 	/** 契約的時間戳格式（{@link Wire#TIMESTAMP}；基本資料的 {@code lastLoginAt} 用同一份）。 */
 	private static final DateTimeFormatter WIRE_TS = Wire.TIMESTAMP;
@@ -254,42 +239,19 @@ public class NoteService {
 		this.jdbc = jdbc;
 	}
 
-	static boolean hasLoneSurrogate(String s) {
-		for (int i = 0; i < s.length(); i++) {
-			char c = s.charAt(i);
-			if (Character.isHighSurrogate(c)) {
-				if (i + 1 < s.length() && Character.isLowSurrogate(s.charAt(i + 1))) {
-					i++;
-					continue;
-				}
-				return true;
-			}
-			if (Character.isLowSurrogate(c)) {
-				return true;
-			}
-		}
-		return false;
-	}
-
 	/** 依當前位置留下便條，回傳 trim 後的正規 Note。 */
 	Note drop(UUID author, DropRequest request) {
 		if (request == null || request.content() == null) {
 			throw malformed();
 		}
-		// U+0000 是合法的 JSON 逸出，但 Postgres 的 text 存不下它，而契約的空白字元集也不含它
-		// （剝不掉、也不算空）⇒ 不擋就是一路撞到 INSERT。屬格式錯誤那一桶，不新增契約 token。
-		if (request.content().indexOf(0) >= 0) {
-			throw malformed();
-		}
-		// 孤立代理對（沒配對的 \ud800–\udfff）同樣是合法的 JSON 逸出、不合法的 Unicode 純量值：
-		// 轉 UTF-8 時會被靜默換成 U+FFFD／「?」存進去，使用者送的與存的不同、兩側都沒有訊號。
-		// 與 U+0000 同一桶；配對正確的代理對（emoji、星群平面字）不受影響。
-		if (hasLoneSurrogate(request.content())) {
+		// U+0000 與孤立代理對：Postgres 的 text 存不下或會存變樣（理由見 Wire#unstorable）。
+		// 不擋就是一路撞到 INSERT。屬格式錯誤那一桶，不新增契約 token；暱稱走同一條。
+		if (Wire.unstorable(request.content())) {
 			throw malformed();
 		}
 		Coordinate at = located(request.coordinate());
 		// 順序不能反：上限量的是 trim **之後**的內容。
-		String content = EDGE_WHITESPACE.matcher(request.content()).replaceAll("");
+		String content = Wire.trim(request.content());
 		if (content.isEmpty()) {
 			throw new ApiException(HttpStatus.BAD_REQUEST, "content_empty", null);
 		}

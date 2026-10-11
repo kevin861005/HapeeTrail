@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "4.3.0"
+  version: "4.4.0"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/HapeeTrail
@@ -18,7 +18,8 @@ info:
     被登出的 session 已簽發、尚未過期的 access token 打本服務一律 401（見 `Unauthorized`）。
     前提是登出請求真的抵達 Supabase：離線時、或送出時 access token 已過期的登出，伺服器端的
     session 沒有被終止，殘留的 token 在過期前仍然有效（notes.md §1）。
-    **註銷帳號**則打本服務的 `DELETE /v1/me`；**基本資料**（暱稱、登入方式…）是 `GET /v1/me`。
+    **註銷帳號**則打本服務的 `DELETE /v1/me`；**基本資料**（暱稱、登入方式…）是 `GET /v1/me`，
+    改暱稱是 `PATCH /v1/me`（v4.4.0 起）。
 
     **App 設定**（v4.2.0 起）：`GET /v1/app/update` 更新檢查（回最低支援版與最新版，比較在 App）、
     `POST /v1/app/flags` 功能總開關（逐 key 回布林）。**兩支都不需要認證**——App 一啟動、
@@ -436,9 +437,10 @@ paths:
         - `loginMethod`：`anonymous`（訪客，尚未綁定）、`google`、`apple`。綁了兩個以上取**最早綁定**
           的那個（與 Supabase 自己算 `app_metadata.provider` 的規則相同）。日後新增登入方式＝新增值，
           client 遇到不認得的值走預設分支（notes.md §9）。
-        - `nickname`：綁定身分的提供者給的姓名（Google 有；Apple 的姓名不在 id_token 裡），
-          訪客為 `null`。本服務沒有編輯端點；經 Supabase 改了 user metadata 會反映在這裡
-          （使用者自己可控的字串，只回給本人、伺服器不驗證）。
+        - `nickname`：本人經 `PATCH /v1/me` 設的暱稱**最優先**；沒設（或已清除）時是綁定身分的
+          提供者給的姓名（Google 有；Apple 的姓名不在 id_token 裡），訪客為 `null`。
+          經 Supabase 改了 user metadata 也會反映在這裡（優先序在自訂暱稱之後、提供者之前；
+          使用者自己可控的字串，只回給本人、伺服器不驗證）。
         - `lastLoginAt`：Supabase 記錄的上次登入時間（`last_sign_in_at`）；**訪客一律 `null`**。
         - `memberLevel`：目前恆為 `free`，預留給日後的訂閱等級；新增值為非破壞性變更。
       responses:
@@ -448,6 +450,70 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Profile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [account]
+      operationId: updateMe
+      summary: 更新暱稱
+      description: |
+        設定或清除呼叫者自己的暱稱，對象只來自 Bearer token 的 `sub`。
+        成功回 **200** 與更新後的 Profile（與 `GET /v1/me` 同形、同內容）。
+
+        - `nickname` 給字串＝設定。伺服器**先 trim 再計數**，字元集與便條內容相同
+          （Unicode White_Space ＋ U+001C–U+001F，見 notes.md §4）；回傳的 `nickname` 是
+          trim 後的版本，可能與送出的不同。trim 後為空 → `nickname_empty`；超過 20 個
+          Unicode code point → `nickname_too_long`（`details.maxChars`）。
+        - `nickname` 給 `null`＝清除自訂暱稱，之後回到提供者給的名字（訪客為 `null`）。
+          本來就沒設也是 200。
+        - `nickname` 鍵**必須存在**：缺鍵（含 `{}`、沒有 body）、型別不是字串或 null、
+          含 U+0000 或孤立代理對 → 400 且**沒有 `code`**（型別／格式錯誤，與便條 `content` 同一規則）。
+
+        不檢查重複（兩個旅人可以同名）、不做敏感詞過濾。可重複呼叫：第二次覆蓋第一次。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfile"
+            examples:
+              set:
+                summary: 設定暱稱
+                value: { nickname: Kevin }
+              clear:
+                summary: 清除自訂暱稱（回到提供者給的名字）
+                value: { nickname: null }
+      responses:
+        "200":
+          description: 更新後的基本資料
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "400":
+          description: |
+            `nickname_empty`｜`nickname_too_long`（`details.maxChars`）。
+            另含**沒有 `code`** 的型別／格式錯誤（非法 JSON、缺 `nickname` 鍵、型別不對、
+            含 U+0000 或孤立代理對）。
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                businessError:
+                  summary: 業務錯誤（有 code）
+                  value:
+                    type: about:blank
+                    title: nickname_too_long
+                    status: 400
+                    code: nickname_too_long
+                    details: { maxChars: 20 }
+                malformed:
+                  summary: 型別／格式錯誤（**沒有 code**）
+                  value:
+                    type: about:blank
+                    title: Bad Request
+                    status: 400
         "401":
           $ref: "#/components/responses/Unauthorized"
     delete:
@@ -838,7 +904,9 @@ components:
           type: string
           nullable: true
           example: Kevin Chen
-          description: 綁定身分提供的姓名；訪客、或提供者沒給（Apple）時為 null
+          description: |
+            本人設的暱稱（`PATCH /v1/me`）優先；沒設時為綁定身分提供的姓名；
+            訪客、或提供者沒給（Apple）時為 null
         loginMethod:
           type: string
           example: anonymous
@@ -856,6 +924,24 @@ components:
           type: string
           example: free
           description: 會員等級，目前恆為 `free`（預留給訂閱）；日後新增值為非破壞性變更，不認得的當 `free`。
+
+    UpdateProfile:
+      type: object
+      description: 更新暱稱的請求（`PATCH /v1/me`）。`nickname` 鍵必須存在；給 null ＝清除。
+      required: [nickname]
+      properties:
+        nickname:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 20
+          example: Kevin
+          description: |
+            1–20 個 Unicode code point（**以 code point 計、不是 grapheme**：膚色／家族／國旗 emoji
+            是 2–7 個 code point，client 預檢要用同樣的單位，同 notes.md §4）。伺服器**先 trim 再計數**，字元集同便條
+            `content`（Unicode White_Space ＋ U+001C–U+001F）；trim 後為空 → `nickname_empty`，
+            超過 → `nickname_too_long`。**不得含 U+0000 或孤立代理對**（400 且沒有 `code`）。
+            `null` ＝清除自訂暱稱。
 
     UpdateCheck:
       type: object
@@ -973,6 +1059,8 @@ components:
             - own_note
             - too_far
             - pickup_rate_limited
+            - nickname_empty
+            - nickname_too_long
         details:
           type: object
           nullable: true
@@ -987,6 +1075,7 @@ components:
             `too_far` → `{"distanceM": 87}`（伺服器當下算出的實際距離，公尺；與
             NearbyHint 的 `distanceM` 同一算法）；
             `content_too_long` → `{"maxChars": 500}`（Unicode code point）；
+            `nickname_too_long` → `{"maxChars": 20}`（Unicode code point）；
             `active_note_limit` → `{"maxActiveNotes": 50}`（未撿**公開**便條的數量上限）；
             `private_note_limit` → `{"maxPrivateNotes": 5000}`（旅遊紀錄的絕對總量上限）；
             `pickup_rate_limited` → `{"retryAfterS": 1800}`（伺服器算出的建議重試秒數，

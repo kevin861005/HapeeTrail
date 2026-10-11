@@ -6,9 +6,16 @@
 
 ## 進行中
 
-（無）
+- [ ] **T34** `PATCH /v1/me` 更新暱稱（20 code point、trim 同便條、null 清除、不擋重複）；表 `hapeetrail_private.profiles`；
+  契約 v4.4.0 新增 `nickname_empty`／`nickname_too_long`。spec：`.scratch/t34-update-profile/spec.md`
 
 ## 待辦
+- [ ] **T35** 🔥 `Wire.trim`（原 `NoteService.EDGE_WHITESPACE`）的 regex 是 **O(n²)**：上限在 trim 之後才檢查，
+  原始字串長度不受限，中段塞一長串空白時 `[ws]+\z` 每個起點都重掃（T34 複核 Opus 實測 JDK 21：
+  空白 10k → 80ms、40k → 1.2s，1MB body 約 12 分鐘 CPU；regex 不理會中斷，Cloud Run 逾時只斷連線）。
+  匿名帳號免費就能拿到 ⇒ 幾個請求吃滿單 vCPU。T19 起便條就有，T34 的暱稱多一個入口。
+  修法：頭尾各一次線性 code point 掃描（同一份 White_Space＋U+001C–1F 字元集），語意不變；possessive 修不了。
+  另考慮：trim 前先以原始長度粗檢（例如 > 4×上限 直接 400 無 code）。補一條時間上限測試。**優先處理**
 - [ ] **T25**（#5） 整合 Google + Apple 登入（2026-09-06 裁決：保留匿名＝訪客模式，Google/Apple 為升級綁定、
   同一 UUID 延續；不開放自行註冊）。研究已完成：`docs/research/2026-09-06-supabase-anon-upgrade-native-oauth.md`
   （核心：升級只能用 `linkIdentityWithIdToken`、後端零改動）。spec 與施工票：`.scratch/t25-social-login/`

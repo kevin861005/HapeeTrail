@@ -106,16 +106,45 @@ curl "$BASE/v1/me" -H "Authorization: Bearer $TOKEN"
 - `loginMethod`：`anonymous`（訪客，尚未綁定）、`google`、`apple`。綁了兩個以上取**最早綁定**的那個
   （與 Supabase 自己算 `app_metadata.provider` 的規則相同）。日後新增登入方式＝新增值，
   client 走 §9 的 default 分支。
-- `nickname` 來自綁定身分的提供者：Google 有；Apple 的姓名不在 id_token 裡（只有 client
-  第一次授權時拿得到），所以 Apple 使用者可能是 `null`。訪客一律 `null`。**本服務沒有編輯端點**；
-  旅人經 Supabase 改了 user metadata（各語言 SDK 的 updateUser）會反映在這裡——因此這是
-  使用者自己可控的字串，只回給本人、伺服器不驗證。
+- `nickname`：本人用 `PATCH /v1/me`（下一節）設的暱稱**最優先**；沒設（或已清除）時來自綁定身分的
+  提供者：Google 有；Apple 的姓名不在 id_token 裡（只有 client 第一次授權時拿得到），所以 Apple
+  使用者可能是 `null`。訪客沒設暱稱時一律 `null`。旅人經 Supabase 改了 user metadata（各語言 SDK
+  的 updateUser）也會反映在這裡（優先序在自訂暱稱之後、提供者之前）——那是使用者自己可控、
+  伺服器不驗證的字串，只回給本人。
 - `lastLoginAt`：Supabase 記錄的上次登入時間（GoTrue 的 `last_sign_in_at`）；**訪客一律 `null`**——
   訪客就是「沒登入過」。哪些動作會刷新它（綁定、重新登入；token 刷新不會）以 T25 實測為準。
 - `memberLevel`：目前恆為 `free`，預留給日後的訂閱等級；新增值為非破壞性變更，client 遇到
   不認得的值當 `free` 處理。
 - `id` ＝ token 的 `sub`，綁定帳號前後不變。
-- 這是唯一會回傳自己 uuid 的端點，而且只回給本人；便條上仍然永遠不顯示作者（§3）。
+- 這是唯一會回傳自己 uuid 的端點（`PATCH /v1/me` 回同一份），而且只回給本人；便條上仍然永遠不顯示作者（§3）。
+
+### 更新暱稱：`PATCH /v1/me`——打 HapeeTrail 服務
+
+```bash
+# 設定
+curl -X PATCH "$BASE/v1/me" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"nickname":"  Kevin  "}'
+# → 200，與 GET /v1/me 同形的 Profile，"nickname": "Kevin"（trim 後）
+
+# 清除自訂暱稱（回到提供者給的名字；訪客回到 null）
+curl -X PATCH "$BASE/v1/me" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"nickname":null}'
+```
+
+成功回 **200** ＋ 更新後的 Profile（五鍵，內容與緊接著打 `GET /v1/me` 相同）。
+
+- `nickname` 給**字串**＝設定；給 **`null`**＝清除（本來就沒設也是 200）。
+  **鍵必須存在**：`{}`、沒有 body、型別不是字串或 null（數字、布林、物件、陣列）→ **400 且沒有 `code`**（§2）。
+- **字數規則與便條內容同一套**（§4），只有上限不同：**先 trim 再計數**、以 **Unicode code point**
+  計 1–20（**以 code point 計、不是 grapheme**——膚色、家族、國旗 emoji 是 2–7 個 code point，
+  client 預檢必須同樣用 code point 數，規則與 §4 相同），trim 的字元集相同（White_Space ＋ U+001C–U+001F；格式字元不算空白）。
+  trim 後為空 → `nickname_empty`；超過 20 → `nickname_too_long`（`details.maxChars` ＝ 20）。
+  回傳的 `nickname` 是 trim 後的版本，**client 應以它更新本地顯示**。
+- ⚠️ 與 `content` 相同：**不得含 U+0000、不得含孤立代理對** → 400 且沒有 `code`。
+- **不檢查重複**（兩個旅人可以同名）、**不做敏感詞過濾**。暱稱目前只回給本人。
+- 冪等：同一個值重送結果相同，timeout 後可以直接重試；第二次設定覆蓋第一次。
 
 ## 2. 錯誤：一個閘門，兩層分流
 
@@ -144,7 +173,7 @@ curl "$BASE/v1/me" -H "Authorization: Bearer $TOKEN"
 - `details` 是**選配的附帶資料**，**v4 起是真的 JSON 物件**——v3「內容為 JSON 的字串、
   需要第二次解析」那條規則**消失了**。沒有附帶資料時**這個鍵省略**，
   client 不得依賴其存在——且**不得區分「沒有這個鍵」與「值為 null」**，兩者都代表沒有附帶資料
-  （它讓提示文案更精確，不是流程的前提）。§8 列出目前帶資料的五個 token。
+  （它讓提示文案更精確，不是流程的前提）。§8 列出目前帶資料的六個 token。
 - `429` 另帶標準的 `Retry-After` header（秒），值與 `details.retryAfterS` 相同，
   可以直接餵給平台內建的重試機制。
 
@@ -395,6 +424,7 @@ curl -X POST "$BASE/v1/app/flags" -H "Content-Type: application/json" \
 | `invalid_coordinates` | 400 | 留／探索／撿起 | client bug，修 payload |
 | `invalid_cursor` | 400 | 兩支列表 | 游標無效或已過期格式，改從第一頁重新載入 |
 | `content_empty` / `content_too_long` | 400 | 留便條 | 表單行內提示（1–500 code point） |
+| `nickname_empty` / `nickname_too_long` | 400 | 更新暱稱 | 表單行內提示（1–20 code point） |
 | `invalid_style_code` | 400 | 留便條 | client bug，修 payload（代號須落在 1–32767） |
 | `invalid_audience` | 400 | 留便條 | client bug，修 payload（只認得 `anyone`／`self`） |
 | `own_note` | 403 | 撿起 | UI 正常不會觸發（探索不含自己的） |
@@ -412,6 +442,7 @@ curl -X POST "$BASE/v1/app/flags" -H "Content-Type: application/json" \
 |---|---|---|
 | `too_far` | `{"distanceM": 87}` | 「還差 87 公尺」——伺服器當下算的，不是上次探索的估計值 |
 | `content_too_long` | `{"maxChars": 500}` | 告訴使用者要刪掉多少字 |
+| `nickname_too_long` | `{"maxChars": 20}` | 同上，暱稱那一側 |
 | `active_note_limit` | `{"maxActiveNotes": 50}` | 說明為什麼不能再留 |
 | `private_note_limit` | `{"maxPrivateNotes": 5000}` | 同上，旅遊紀錄那一側 |
 | `pickup_rate_limited` | `{"retryAfterS": 1800}` | 大概要等多久，不必盲目重試（同 `Retry-After`） |
@@ -468,6 +499,14 @@ curl -X POST "$BASE/v1/app/flags" -H "Content-Type: application/json" \
 > 此後一律 404。它們從來不屬於 v4 契約，也沒有 fallback 可留。
 
 ## 11. Changelog
+
+- 2026-10-11 **v4.4.0**（新端點＋兩個新 token＝非破壞性，minor bump）：
+  - **新增 `PATCH /v1/me`（更新暱稱）**：body `{"nickname": "…"}`，字串＝設定、`null`＝清除、
+    缺鍵＝400 無 `code`；回更新後的 Profile（§1）。先 trim 再計數，1–20 code point，字元集同便條內容。
+  - **新增兩個 token**：`nickname_empty`、`nickname_too_long`（400；後者附 `{"maxChars": 20}`）（§8）。
+  - `GET /v1/me` 的 `nickname` 優先序：本人自訂的暱稱 → user metadata → 提供者給的姓名（§1）。
+  **完全沒變的**：既有 14 個錯誤 token 與狀態碼、Profile 的五個鍵、Note／NearbyHint 的鍵、
+  既有 envelope、時間戳格式。
 
 - 2026-10-11 **v4.3.0**（刪鍵＝破壞性，**經 2026-10-11 會議同意**；WeiWei 當時尚未串接這幾支）：
   - **`GET /v1/app/update` 只回兩個門檻**：回應剩 `minimumVersion`、`latestVersion` 兩鍵，

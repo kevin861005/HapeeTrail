@@ -88,6 +88,11 @@ class SmokeTest extends SupabaseDbTest {
 			assertThat(queryBoolean("select has_table_privilege('" + object + "', 'insert, update, delete, truncate')"))
 				.isFalse();
 		}
+		// T34 自訂暱稱：本人可設可清，所以讀寫刪都要（delete ＝ null 清除）；truncate 是整表清空，不給。
+		// 逗號清單的 has_table_privilege 是「任一」，所以逐項 bool_and。
+		assertThat(queryBoolean("select bool_and(has_table_privilege('hapeetrail_private.profiles', p))"
+				+ " from unnest(array['select', 'insert', 'update', 'delete']) p")).isTrue();
+		assertThat(queryBoolean("select has_table_privilege('hapeetrail_private.profiles', 'truncate')")).isFalse();
 		// RLS 不關（notes_select_own 保留休眠），全列放行只給這個角色。
 		assertThat(adminQueryBoolean("select relrowsecurity from pg_class where oid = 'public.notes'::regclass")).isTrue();
 	}
@@ -113,6 +118,10 @@ class SmokeTest extends SupabaseDbTest {
 		// 服務自己的 schema（ADR-0013 的 session view、T30–T32 的三個物件）：client 角色連門都進不去，
 		// service_role 也一樣（ADR-0014 的爆炸半徑；這個 schema 沒有 default privileges）
 		assertThat(adminQueryBoolean("select bool_and(not has_schema_privilege(r, 'hapeetrail_private', 'usage'))"
+				+ " from unnest(array['anon', 'authenticated', 'service_role']) r")).isTrue();
+		// 門之外的那一層也空：就算哪天有人 grant 了 schema USAGE，暱稱表本身對這三個角色仍零權限。
+		assertThat(adminQueryBoolean("select bool_and(not has_table_privilege(r, 'hapeetrail_private.profiles',"
+				+ " 'select, insert, update, delete, truncate, references, trigger'))"
 				+ " from unnest(array['anon', 'authenticated', 'service_role']) r")).isTrue();
 	}
 

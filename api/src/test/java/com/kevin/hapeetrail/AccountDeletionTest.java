@@ -98,6 +98,32 @@ class AccountDeletionTest extends SupabaseDbTest {
 	}
 
 	/**
+	 * 隱私承諾（T34）：自訂暱稱是旅人自己寫的字，註銷要一起帶走——靠 profiles 的 FK cascade，
+	 * 不是服務端另外刪。哪天有人把 FK 拿掉或改成 SET NULL，這條就紅。
+	 */
+	@Test
+	void deletingMyAccountTakesMyNicknameToo() throws Exception {
+		Traveler me = traveler();
+		var set = send(HttpRequest.newBuilder(uri("/v1/me"))
+			.header("Authorization", "Bearer " + me.token())
+			.header("Content-Type", "application/json")
+			.method("PATCH", BodyPublishers.ofString("{\"nickname\":\"要被帶走的名字\"}", StandardCharsets.UTF_8)));
+		assertThat(set.statusCode()).describedAs(set.body()).isEqualTo(200);
+		assertThat(nicknameRows(me)).describedAs("前提：暱稱真的存進去了").isEqualTo(1);
+
+		assertThat(deleteMe(me).statusCode()).isEqualTo(204);
+
+		assertThat(nicknameRows(me)).isZero();
+	}
+
+	private static int nicknameRows(Traveler traveler) {
+		return admin().sql("select count(*) from hapeetrail_private.profiles where user_id = ?")
+			.param(traveler.id())
+			.query(Integer.class)
+			.single();
+	}
+
+	/**
 	 * 送給 GoTrue 的就是研究 Q2／Q3 釘死的形狀：刪的是 token 的 {@code sub}（沒有別的來源可指定
 	 * 刪誰）、secret key 只放 {@code apikey}、明寫硬刪。旅人自己的 Bearer 絕不轉送——GoTrue 會拿它
 	 * 驗 admin（403 {@code not_admin}），而且那是旅人的憑證，不是服務的。
