@@ -6,9 +6,7 @@
 
 ## 進行中
 
-- [ ] **T33** 2026-10-11 會議三決策：`GET /v1/app/update` 只回 `minimumVersion`／`latestVersion`（判定交 App）、
-  `GET /v1/me` 去 `avatarUrl`、`feature_flags` 預設 `paywall=true`。契約 v4.3.0（刪鍵＝破壞性，WeiWei 會議同意、尚未串接）。
-  spec：`.scratch/t33-meeting-1011/spec.md`
+（無）
 
 ## 待辦
 - [ ] **T25**（#5） 整合 Google + Apple 登入（2026-09-06 裁決：保留匿名＝訪客模式，Google/Apple 為升級綁定、
@@ -58,6 +56,13 @@
 ## 已完成
 
 （30 天內；更舊直接刪，git 歷史即檔案）
+
+- [x] **T33** 2026-10-11 會議三決策：`GET /v1/app/update` 只回 `minimumVersion`／`latestVersion`（比較交 App）、
+  `GET /v1/me` 去 `avatarUrl`、`feature_flags` 預設 `paywall=true`；契約 **v4.3.0**（刪鍵＝破壞性，WeiWei 會議同意、尚未串接）
+  ✅ 2026-10-11 完成並上線。spec 已歸檔：`docs/tasks/archive/meeting-1011/spec.md`；看板 #26 決策、#27 會議
+  證據：commit `35ebcf2`；migration `20261011000000` 已 `db push`；Cloud Run **revision 00006**（先部署後 push，
+  view 少欄位所以順序反過來）；`./mvnw test` **240 綠**；check-contract exit 0；redocly valid（2 warnings，預期）；
+  hosted-smoke **47/47**；newman **22/22**；線上 `paywall` 回 true。Opus 實作＋Opus 複核（有條件通過，必修項已改）。
 
 - [x] **T30／T31／T32** 基本資料 `GET /v1/me`、更新檢查 `GET /v1/app/update`、功能總開關 `POST /v1/app/flags`
   （issue #9／#10／#11）
