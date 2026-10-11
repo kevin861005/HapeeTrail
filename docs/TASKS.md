@@ -6,7 +6,9 @@
 
 ## 進行中
 
-（無）
+- [ ] **T33** 2026-10-11 會議三決策：`GET /v1/app/update` 只回 `minimumVersion`／`latestVersion`（判定交 App）、
+  `GET /v1/me` 去 `avatarUrl`、`feature_flags` 預設 `paywall=true`。契約 v4.3.0（刪鍵＝破壞性，WeiWei 會議同意、尚未串接）。
+  spec：`.scratch/t33-meeting-1011/spec.md`
 
 ## 待辦
 - [ ] **T25**（#5） 整合 Google + Apple 登入（2026-09-06 裁決：保留匿名＝訪客模式，Google/Apple 為升級綁定、

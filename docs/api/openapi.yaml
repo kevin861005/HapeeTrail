@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "4.2.0"
+  version: "4.3.0"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/HapeeTrail
@@ -18,9 +18,9 @@ info:
     被登出的 session 已簽發、尚未過期的 access token 打本服務一律 401（見 `Unauthorized`）。
     前提是登出請求真的抵達 Supabase：離線時、或送出時 access token 已過期的登出，伺服器端的
     session 沒有被終止，殘留的 token 在過期前仍然有效（notes.md §1）。
-    **註銷帳號**則打本服務的 `DELETE /v1/me`；**基本資料**（暱稱、頭像、登入方式…）是 `GET /v1/me`。
+    **註銷帳號**則打本服務的 `DELETE /v1/me`；**基本資料**（暱稱、登入方式…）是 `GET /v1/me`。
 
-    **App 設定**（v4.2.0 起）：`GET /v1/app/update` 更新檢查（強制／有新版由伺服器判定）、
+    **App 設定**（v4.2.0 起）：`GET /v1/app/update` 更新檢查（回最低支援版與最新版，比較在 App）、
     `POST /v1/app/flags` 功能總開關（逐 key 回布林）。**兩支都不需要認證**——App 一啟動、
     還沒匿名登入或 token 已過期時就能打；`Authorization` 帶了也會被忽略，永遠不會因為 token 而 401。
 
@@ -428,17 +428,17 @@ paths:
     get:
       tags: [account]
       operationId: me
-      summary: 基本資料（頭像、暱稱、登入方式、上次登入時間、會員等級）
+      summary: 基本資料（暱稱、登入方式、上次登入時間、會員等級）
       description: |
         呼叫者自己的基本資料，對象只來自 Bearer token 的 `sub`；沒有參數。
-        六個鍵**永遠都在**，沒有值的是 `null`（不是缺鍵）。
+        五個鍵**永遠都在**，沒有值的是 `null`（不是缺鍵）。
 
         - `loginMethod`：`anonymous`（訪客，尚未綁定）、`google`、`apple`。綁了兩個以上取**最早綁定**
           的那個（與 Supabase 自己算 `app_metadata.provider` 的規則相同）。日後新增登入方式＝新增值，
           client 遇到不認得的值走預設分支（notes.md §9）。
-        - `nickname`／`avatarUrl`：綁定身分的提供者給的（Google 有姓名與頭像；Apple 沒有頭像、
-          姓名也不在 id_token 裡），訪客兩者皆 `null`。本服務沒有編輯端點；經 Supabase 改了
-          user metadata 會反映在這裡（使用者自己可控的字串，只回給本人、伺服器不驗證）。
+        - `nickname`：綁定身分的提供者給的姓名（Google 有；Apple 的姓名不在 id_token 裡），
+          訪客為 `null`。本服務沒有編輯端點；經 Supabase 改了 user metadata 會反映在這裡
+          （使用者自己可控的字串，只回給本人、伺服器不驗證）。
         - `lastLoginAt`：Supabase 記錄的上次登入時間（`last_sign_in_at`）；**訪客一律 `null`**。
         - `memberLevel`：目前恆為 `free`，預留給日後的訂閱等級；新增值為非破壞性變更。
       responses:
@@ -491,37 +491,26 @@ paths:
     get:
       tags: [app]
       operationId: checkUpdate
-      summary: 更新檢查（強制更新／有新版，由伺服器判定）
+      summary: 更新檢查（回最低支援版與最新版，比較在 App）
       description: |
-        把 App 目前的版本交給伺服器判定：低於**最低相容版本**＝`forceUpdate: true`（必須更新才能
-        繼續使用）；低於**最新版**＝`updateAvailable: true`（可提示、不強制；`forceUpdate` 為 true 時
-        它必然也是 true）。兩個門檻原樣回傳只供顯示——**client 不要自己比版本**，調門檻不需要發版。
+        回傳 iOS 的兩個版本門檻：**最低支援版**（`minimumVersion`）與**最新版**（`latestVersion`）。
+        伺服器不判定、也不收 App 的版本——**比較在 App**。建議做法：App 目前版本低於
+        `minimumVersion` ＝擋住、必須更新才能繼續使用；低於 `latestVersion` ＝可提示、不強制。
+        兩個值都是 1–4 段純數字以點分隔（`1.2`、`1.2.3`、`1.2.3.4`），建議逐段按數值比、缺段補 0
+        （`1.2` ＝ `1.2.0`，`1.9` < `1.10`）。調門檻不需要發版。
 
-        `version`：1–4 段純數字以點分隔（`1.2`、`1.2.3`、`1.2.3.4`），伺服器逐段按數值比較、
-        缺段補 0（`1.2` ＝ `1.2.0`，`1.9` < `1.10`）。缺少或格式不合（`v1.2`、`1.2.0-beta`、空字串）
-        → 400 且**沒有 `code`**。目前只有 iOS 一個平台，沒有平台參數；日後加平台為非破壞性變更。
+        沒有參數。目前只有 iOS 一個平台；日後加平台為非破壞性變更。
 
         **不需要認證**：App 啟動第一件事就能打，不必先匿名登入；`Authorization` 帶了也會被忽略
         （過期或已登出的 token 不會讓這支 401）。
       security: []
-      parameters:
-        - name: version
-          in: query
-          required: true
-          schema:
-            type: string
-            pattern: '^\d{1,9}(\.\d{1,9}){0,3}$'
-            example: "1.2.0"
-          description: App 目前的版本（iOS 的 CFBundleShortVersionString）
       responses:
         "200":
-          description: 判定結果
+          description: 兩個版本門檻
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/UpdateCheck"
-        "400":
-          $ref: "#/components/responses/FormatBadRequest"
 
   /v1/app/flags:
     post:
@@ -533,7 +522,8 @@ paths:
         （不是錯誤、也不會缺鍵），所以可以放心問還不存在的 key——client 端的預設值也應該是「關」。
         重複的 key 合併。開關是**全站**的，不分使用者；判定在伺服器，撥動不需要發版。
 
-        key 由雙方約定、不寫進本契約（它們是設定不是契約）；命名建議 `區域.功能`（如 `map.heatmap`）。
+        **已定義的 key**：`paywall`（付費牆開關，上線預設 `true`）。之後新增 key 只是在這裡加一行，非破壞性；
+        命名建議 `區域.功能`（如 `map.heatmap`）。
         字元集 `A-Za-z0-9_.-`、1–64 字元、一次最多 50 個；不合（含 `keys` 缺少、不是字串陣列）
         → 400 且**沒有 `code`**。回應包在 `flags` 物件裡而不是裸 map：日後加欄位不是破壞性變更。
 
@@ -545,7 +535,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/FlagsRequest"
-            example: { keys: [map.heatmap, notes.drop] }
+            example: { keys: [paywall, nobody.set.this] }
       responses:
         "200":
           description: 每個問到的 key 一個布林
@@ -553,7 +543,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FlagsResult"
-              example: { flags: { map.heatmap: true, notes.drop: false } }
+              example: { flags: { paywall: true, nobody.set.this: false } }
         "400":
           $ref: "#/components/responses/FormatBadRequest"
 
@@ -837,8 +827,8 @@ components:
 
     Profile:
       type: object
-      description: 呼叫者的基本資料（`GET /v1/me`）。六鍵永遠都在，沒有值的是 null。
-      required: [id, nickname, avatarUrl, loginMethod, lastLoginAt, memberLevel]
+      description: 呼叫者的基本資料（`GET /v1/me`）。五鍵永遠都在，沒有值的是 null。
+      required: [id, nickname, loginMethod, lastLoginAt, memberLevel]
       properties:
         id:
           type: string
@@ -849,12 +839,6 @@ components:
           nullable: true
           example: Kevin Chen
           description: 綁定身分提供的姓名；訪客、或提供者沒給（Apple）時為 null
-        avatarUrl:
-          type: string
-          format: uri
-          nullable: true
-          example: https://lh3.googleusercontent.com/a/default-user
-          description: 綁定身分提供的頭像網址（Google 有、Apple 沒有）；訪客為 null
         loginMethod:
           type: string
           example: anonymous
@@ -875,23 +859,19 @@ components:
 
     UpdateCheck:
       type: object
-      description: 更新檢查的判定（`GET /v1/app/update`）。兩個判定給流程用，兩個門檻只供顯示。
-      required: [forceUpdate, updateAvailable, minimumVersion, latestVersion]
+      description: 更新檢查的兩個門檻（`GET /v1/app/update`）。判定在 App：低於 minimum 擋、低於 latest 提示。
+      required: [minimumVersion, latestVersion]
       properties:
-        forceUpdate:
-          type: boolean
-          description: 低於最低相容版本——必須更新才能繼續使用
-        updateAvailable:
-          type: boolean
-          description: 低於最新版——可提示、不強制。forceUpdate 為 true 時必然也是 true
         minimumVersion:
           type: string
+          pattern: '^\d{1,9}(\.\d{1,9}){0,3}$'
           example: "1.2.0"
-          description: 最低相容版本（顯示用；不要拿來自己比）
+          description: 最低支援版——App 低於它就必須更新才能繼續使用
         latestVersion:
           type: string
+          pattern: '^\d{1,9}(\.\d{1,9}){0,3}$'
           example: "1.4.0"
-          description: 最新版（顯示用；不要拿來自己比）
+          description: 最新版——App 低於它可提示有新版、不強制
 
     FlagsRequest:
       type: object
@@ -905,7 +885,7 @@ components:
           items:
             type: string
             pattern: '^[A-Za-z0-9_.-]{1,64}$'
-            example: map.heatmap
+            example: paywall
 
     FlagsResult:
       type: object
@@ -917,7 +897,7 @@ components:
           description: 問到的每個 key 一個布林；伺服器沒設定的 key 為 false
           additionalProperties:
             type: boolean
-          example: { map.heatmap: true, notes.drop: false }
+          example: { paywall: true, nobody.set.this: false }
 
     Session:
       type: object

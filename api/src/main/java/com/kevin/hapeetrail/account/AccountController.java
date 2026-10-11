@@ -45,17 +45,17 @@ class AccountController {
 
 	/**
 	 * 基本資料（T30）。登入方式＝最早綁定的 identity 的 provider（GoTrue 算 app_metadata.provider
-	 * 的同一規則），沒有 ＝ 匿名。暱稱／頭像：使用者自己在 GoTrue 設的 user metadata 優先，
+	 * 的同一規則），沒有 ＝ 匿名。暱稱：使用者自己在 GoTrue 設的 user metadata 優先，
 	 * 其次是 provider 給的 identity_data（綁定不會回寫 user metadata）；Google 兩組鍵名並存，
-	 * Apple 的 id_token 不帶姓名也沒有頭像。view 只投影這八個鍵，email 等 PII 不經過服務角色。
+	 * Apple 的 id_token 不帶姓名。view 只投影這四個鍵，email 等 PII 不經過服務角色。
+	 * 頭像 2026-10-11 會議決定先不要：view 連投影都拿掉，用不到的欄位不經過服務角色。
 	 *
-	 * <p>這兩個值是**使用者可控、未驗證**的字串（任何旅人都能經 Supabase 的 updateUser 改
-	 * user_metadata）：只回給本人所以現在無害；哪天要顯示給別人，先驗長度與 URL scheme。
+	 * <p>暱稱是**使用者可控、未驗證**的字串（任何旅人都能經 Supabase 的 updateUser 改
+	 * user_metadata）：只回給本人所以現在無害；哪天要顯示給別人，先驗長度。
 	 */
 	private static final String PROFILE = """
 			select coalesce(provider, 'anonymous') as login_method, last_sign_in_at,
-			       coalesce(meta_full_name, meta_name, identity_full_name, identity_name) as nickname,
-			       coalesce(meta_avatar_url, meta_picture, identity_avatar_url, identity_picture) as avatar_url
+			       coalesce(meta_full_name, meta_name, identity_full_name, identity_name) as nickname
 			  from hapeetrail_private.auth_users
 			 where id = ?
 			""";
@@ -97,7 +97,7 @@ class AccountController {
 			String loginMethod = rs.getString("login_method");
 			OffsetDateTime lastSignIn = rs.getObject("last_sign_in_at", OffsetDateTime.class);
 			boolean guest = loginMethod.equals("anonymous");
-			return new Profile(id, rs.getString("nickname"), rs.getString("avatar_url"), loginMethod,
+			return new Profile(id, rs.getString("nickname"), loginMethod,
 					(guest || lastSignIn == null) ? null : Wire.TIMESTAMP.format(lastSignIn), MEMBER_LEVEL);
 		}).optional().orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "not_authenticated", null));
 	}
@@ -147,7 +147,6 @@ class AccountController {
 
 }
 
-/** 基本資料，契約凍結的 6 鍵、鍵序固定；缺值是 null 不是缺鍵。 */
-record Profile(UUID id, String nickname, String avatarUrl, String loginMethod, String lastLoginAt,
-		String memberLevel) {
+/** 基本資料，契約凍結的 5 鍵、鍵序固定；缺值是 null 不是缺鍵。 */
+record Profile(UUID id, String nickname, String loginMethod, String lastLoginAt, String memberLevel) {
 }

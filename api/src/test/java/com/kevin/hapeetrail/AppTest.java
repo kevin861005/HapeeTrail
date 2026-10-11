@@ -15,7 +15,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import org.springframework.boot.test.context.SpringBootTest;
@@ -43,57 +42,28 @@ class AppTest extends SupabaseDbTest {
 
 	// ── T31 ────────────────────────────────────────────────────────────────────
 
-	/** 低於最低相容版本＝強制；低於最新版＝有新版可更新；其餘都不用。兩個門檻原樣回傳給 client 顯示。 */
-	@ParameterizedTest(name = "{0} → forced={1} available={2}")
-	@CsvSource({ "1.1.9, true, true", "1.0, true, true", "0.9.9.9, true, true", "1.2.0, false, true",
-			"1.2, false, true", "1.3.7, false, true", "1.4.0, false, false", "1.4, false, false",
-			"1.4.0.1, false, false", "2.0.0, false, false" })
-	void verdictFollowsTheTwoGates(String version, boolean forced, boolean available) throws Exception {
-		var response = get("/v1/app/update?version=" + version, this.token);
+	/**
+	 * 伺服器只交出兩個門檻、原值來自表；「低於 minimum 強制、低於 latest 提示」由 App 自己比
+	 * （2026-10-11 會議）。不收參數，所以這支沒有 400。
+	 */
+	@Test
+	void returnsExactlyTheTwoGatesFromTheTable() throws Exception {
+		var response = get("/v1/app/update", this.token);
 
 		assertThat(response.statusCode()).describedAs(response.body()).isEqualTo(200);
-		assertThat(response.body()).isEqualTo(("{\"forceUpdate\":%s,\"updateAvailable\":%s,"
-				+ "\"minimumVersion\":\"1.2.0\",\"latestVersion\":\"1.4.0\"}").formatted(forced, available));
-	}
-
-	/** 逐段按數值比，不是字串比：1.9 < 1.10。 */
-	@Test
-	void versionsCompareNumericallyNotLexically() throws Exception {
-		versions("1.10.0", "1.10.0");
-
-		var response = get("/v1/app/update?version=1.9.0", this.token);
-
-		assertThat(response.body()).startsWith("{\"forceUpdate\":true,\"updateAvailable\":true,");
-	}
-
-	/** 營運把 minimum 設到 latest 前面（SQL editor 手滑）：強制仍蘊含有新版，兩個判定不互相矛盾。 */
-	@Test
-	void forcedImpliesAvailableEvenWhenGatesAreMisordered() throws Exception {
-		versions("2.0.0", "1.4.0");
-
-		var response = get("/v1/app/update?version=1.5.0", this.token);
-
-		assertThat(response.body()).startsWith("{\"forceUpdate\":true,\"updateAvailable\":true,");
-	}
-
-	/** 版本字串格式錯誤是型別／格式錯誤：400 且沒有 {@code code}（與契約 §2 同一條路）。 */
-	@ParameterizedTest(name = "{0}")
-	@MethodSource
-	void malformedVersionIs400WithoutACode(String label, String query) throws Exception {
-		var response = get("/v1/app/update" + query, this.token);
-
-		assertProblemWithoutCode(response, 400);
-	}
-
-	static Stream<Arguments> malformedVersionIs400WithoutACode() {
-		return Stream.of(Arguments.of("缺 version", ""), Arguments.of("空字串", "?version="),
-				Arguments.of("有字母", "?version=abc"), Arguments.of("v 前綴", "?version=v1.2.0"),
-				Arguments.of("pre-release 尾巴", "?version=1.2.0-beta"), Arguments.of("連續點", "?version=1..2"),
-				Arguments.of("尾點", "?version=1.2."), Arguments.of("五段", "?version=1.2.3.4.5"),
-				Arguments.of("超長數字", "?version=1234567890"));
+		assertThat(response.body()).isEqualTo("{\"minimumVersion\":\"1.2.0\",\"latestVersion\":\"1.4.0\"}");
 	}
 
 	// ── T32 ────────────────────────────────────────────────────────────────────
+
+	/** migration 一上線就種了 {@code paywall = true}（2026-10-11 會議）：不佈置任何資料直接問。 */
+	@Test
+	void paywallIsSeededOn() throws Exception {
+		var response = post("/v1/app/flags", "{\"keys\":[\"paywall\"]}", null);
+
+		assertThat(response.statusCode()).describedAs(response.body()).isEqualTo(200);
+		assertThat(response.body()).isEqualTo("{\"flags\":{\"paywall\":true}}");
+	}
 
 	/** 每個 key 一個布林；表裡沒有的 key 是 false，不是錯誤、也不是缺鍵。重複 key 合併。 */
 	@Test
@@ -144,9 +114,9 @@ class AppTest extends SupabaseDbTest {
 	 */
 	@Test
 	void bothEndpointsWorkWithoutOrWithAStaleToken() throws Exception {
-		assertThat(get("/v1/app/update?version=1.0.0", null).statusCode()).isEqualTo(200);
+		assertThat(get("/v1/app/update", null).statusCode()).isEqualTo(200);
 		assertThat(post("/v1/app/flags", "{\"keys\":[]}", null).statusCode()).isEqualTo(200);
-		assertThat(get("/v1/app/update?version=1.0.0", "not.a.token").statusCode()).isEqualTo(200);
+		assertThat(get("/v1/app/update", "not.a.token").statusCode()).isEqualTo(200);
 		assertThat(post("/v1/app/flags", "{\"keys\":[]}", "not.a.token").statusCode()).isEqualTo(200);
 		// 業務端點不受影響：忽略 header 只限 /v1/app/**
 		assertThat(get("/v1/me", "not.a.token").statusCode()).isEqualTo(401);

@@ -20,5 +20,5 @@ projects: kevin861005/1
 - [ ] WeiWei：build 的 `CFBundleShortVersionString` ＝ 本卡版本號（純數字點分隔），送 TestFlight／審核
 - [ ] 兩人：側欄填「日期」「最低支援版」；要強制舊版更新時把最低支援版提高（只能往上、不能超過本版）
 - [ ] Kevin：Supabase SQL editor 同步門檻——`update hapeetrail_private.app_versions set latest_version = '<本版>', minimum_version = '<最低支援版>' where platform = 'ios';`
-- [ ] Kevin：驗更新檢查（不需 token）——`curl "https://hapeetrail-api-134868178961.asia-northeast1.run.app/v1/app/update?version=<上一版>"` 應回 `updateAvailable: true`
+- [ ] Kevin：驗更新檢查（不需 token）——`curl "https://hapeetrail-api-134868178961.asia-northeast1.run.app/v1/app/update"` 回的 `minimumVersion`／`latestVersion` 應等於剛同步的門檻（比較在 App 端）
 - [ ] 上架後把 Status 改 Done

@@ -1,6 +1,5 @@
 package com.kevin.hapeetrail.app;
 
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,7 +12,6 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -28,10 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 class AppController {
 
-	/** 與 migration 的 CHECK 同一條：1–4 段純數字（iOS 的 CFBundleShortVersionString）。 */
-	private static final Pattern VERSION = Pattern.compile("\\d{1,9}(\\.\\d{1,9}){0,3}");
-
-	/** 同樣與 CHECK 一致：存得進去的 key 才查得到，兩邊不會各自漂移。 */
+	/** 與 migration 的 CHECK 同一條：存得進去的 key 才查得到，兩邊不會各自漂移。 */
 	private static final Pattern FLAG_KEY = Pattern.compile("[A-Za-z0-9_.-]{1,64}");
 
 	/** 一次最多問幾個 key——擋的是失手或惡意的巨量陣列，不是產品規則。 */
@@ -44,25 +39,15 @@ class AppController {
 	}
 
 	/**
-	 * 低於最低相容版本＝強制更新；低於最新版＝有新版。逐段按數值比、缺段補 0（{@code 1.2} ＝ {@code 1.2.0}）。
-	 * 格式不合是型別／格式錯誤：400 沒有 {@code code}。
+	 * 只交出兩個門檻，比較在 App（2026-10-11 會議）：低於 minimum 強制、低於 latest 提示。
+	 * 不收參數，所以這支沒有 400；格式由 migration 的 CHECK 保證，App 拿到的必然是純數字點分版本。
 	 * ponytail: 平台先寫死 ios（只有 iOS）；加 Android 時變成選填 query 參數，非破壞性。
 	 */
 	@GetMapping("/v1/app/update")
-	UpdateCheck update(@RequestParam String version) {
-		if (!VERSION.matcher(version).matches()) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, null, null);
-		}
+	UpdateCheck update() {
 		return this.jdbc.sql("select minimum_version, latest_version from hapeetrail_private.app_versions"
 				+ " where platform = 'ios'")
-			.query((rs, rowNum) -> {
-				String minimum = rs.getString("minimum_version");
-				String latest = rs.getString("latest_version");
-				boolean force = compare(version, minimum) < 0;
-				// 契約承諾「強制必然也有新版」：門檻在 SQL editor 手改，minimum 跑到 latest 前面時
-				// 不能讓兩個判定互相矛盾（複核 B1）。
-				return new UpdateCheck(force, force || compare(version, latest) < 0, minimum, latest);
-			})
+			.query((rs, rowNum) -> new UpdateCheck(rs.getString("minimum_version"), rs.getString("latest_version")))
 			// 列不在是設定壞了（migration 一開始就塞了 ios）：500，不是「不用更新」。
 			.single();
 	}
@@ -86,27 +71,10 @@ class AppController {
 		return new FlagsResult(flags);
 	}
 
-	/** 已通過 {@link #VERSION} 的字串才會進來；DB 那邊由 CHECK 保證。 */
-	static int compare(String a, String b) {
-		int[] x = parts(a);
-		int[] y = parts(b);
-		for (int i = 0; i < Math.max(x.length, y.length); i++) {
-			int c = Integer.compare((i < x.length) ? x[i] : 0, (i < y.length) ? y[i] : 0);
-			if (c != 0) {
-				return c;
-			}
-		}
-		return 0;
-	}
-
-	private static int[] parts(String version) {
-		return Arrays.stream(version.split("\\.")).mapToInt(Integer::parseInt).toArray();
-	}
-
 }
 
-/** {@code GET /v1/app/update} 的回應：兩個判定＋兩個門檻（給 client 顯示用）。 */
-record UpdateCheck(boolean forceUpdate, boolean updateAvailable, String minimumVersion, String latestVersion) {
+/** {@code GET /v1/app/update} 的回應：恰好兩個門檻，判定交給 App。 */
+record UpdateCheck(String minimumVersion, String latestVersion) {
 }
 
 /** {@code POST /v1/app/flags} 的 body。 */
