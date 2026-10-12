@@ -6,8 +6,7 @@
 
 ## 進行中
 
-- [ ] **T34** `PATCH /v1/me` 更新暱稱（20 code point、trim 同便條、null 清除、不擋重複）；表 `hapeetrail_private.profiles`；
-  契約 v4.4.0 新增 `nickname_empty`／`nickname_too_long`。spec：`.scratch/t34-update-profile/spec.md`
+（無）
 
 ## 待辦
 - [ ] **T35** 🔥 `Wire.trim`（原 `NoteService.EDGE_WHITESPACE`）的 regex 是 **O(n²)**：上限在 trim 之後才檢查，
@@ -63,6 +62,13 @@
 ## 已完成
 
 （30 天內；更舊直接刪，git 歷史即檔案）
+
+- [x] **T34** `PATCH /v1/me` 更新暱稱（20 code point、trim 同便條、null 清除、不擋重複；表 `hapeetrail_private.profiles`）；
+  契約 **v4.4.0** 新增 `nickname_empty`／`nickname_too_long`。看板 #28（WeiWei 串接卡）
+  ✅ 2026-10-12 完成並上線。spec 已歸檔：`docs/tasks/archive/update-profile/spec.md`
+  證據：commit `e3db1c2`；migration `20261011010000` 已 `db push`；Cloud Run **revision 00007**；`./mvnw test` **265 綠**；
+  check-contract exit 0；redocly valid（2 warnings 既有）；hosted-smoke **47/47**；newman **24/24**。
+  Opus 實作＋Opus 複核（有條件通過：措辭兩處已修、補 coalesce 與註銷 cascade 測試）；複核揪出既有 O(n²) trim → **T35**。
 
 - [x] **T33** 2026-10-11 會議三決策：`GET /v1/app/update` 只回 `minimumVersion`／`latestVersion`（比較交 App）、
   `GET /v1/me` 去 `avatarUrl`、`feature_flags` 預設 `paywall=true`；契約 **v4.3.0**（刪鍵＝破壞性，WeiWei 會議同意、尚未串接）
