@@ -1,5 +1,6 @@
 package com.kevin.hapeetrail;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -22,9 +23,12 @@ import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.Part;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -42,7 +46,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * -100）讀表單走的正是 {@code getInputStream()}；multipart resolver 解析走的正是 {@code getParts()}。
  * 修之前，匿名的 1 MB 表單會被讀完（探針數到約 1,000,009 bytes），multipart 會被解析成 Part。
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+		// T38 的觀測點：把 Tomcat 的表單上限從 2MB 調到 64KB，1 MB 的 POST 表單就會撞上限（見下方測試）。
+		// 本類別本來就因 @Import 自成一個 context，加這行不多起 context。
+		properties = "server.tomcat.max-http-form-post-size=64KB")
 @Import(NonJsonBodyTest.BodyProbe.class)
 class NonJsonBodyTest extends SupabaseDbTest {
 
@@ -97,6 +104,56 @@ class NonJsonBodyTest extends SupabaseDbTest {
 
 		assertProblemWithoutCode(response, 415);
 		assertThat(BodyProbe.PARTS_PARSED.get()).describedAs("multipart 被解析成 Part").isFalse();
+	}
+
+	/**
+	 * T38：POST 表單不再由 Tomcat 解析。探針看不到這件事——Tomcat 是在 Spring 呼叫
+	 * {@code getParameterMap()} 時從自己的 coyote 緩衝讀 body，不經過任何 wrapper。可觀測的 Tomcat 層證據是
+	 * {@code max-http-form-post-size}（本類別調成 64KB）：Tomcat 要解析時，1 MB 超過上限就丟
+	 * {@code InvalidParameterException} → 走 catch-all 變 500 ＋ ERROR 堆疊；不解析時根本碰不到上限，
+	 * 照常是 415 沒有 code、沒有 ERROR。上限只是觀測用的刻度，任何大小（含正式環境 2MB 以上）走的都是同一條路。
+	 *
+	 * <p>不直接用預設上限送 3 MB：Tomcat 回應後只肯吞掉 2MB（max-swallow-size）未讀的 body 就斷線，
+	 * client 讀不到狀態碼——修前修後都一樣，證明不了什麼。
+	 */
+	@Test
+	@ExtendWith(OutputCaptureExtension.class)
+	void postFormBodiesOverTheTomcatFormLimitAre415WithoutAnErrorLog(CapturedOutput output) throws Exception {
+		String overTheFormLimit = "keys=" + "a".repeat(1_000_000);
+
+		var response = send(request("/v1/app/flags", FORM).POST(BodyPublishers.ofString(overTheFormLimit)), null);
+
+		assertProblemWithoutCode(response, 415);
+		assertThat(output.getAll()).doesNotContain("InvalidParameterException").doesNotContain(" ERROR ");
+	}
+
+	/**
+	 * 同上，換成 chunked（沒有 Content-Length）：Tomcat 解析表單時走另一條讀法（readChunkedPostBody），
+	 * 一樣受 64KB 上限管；修前 500 ＋ ERROR，修後 415 沒有 code、沒有 ERROR。
+	 */
+	@Test
+	@ExtendWith(OutputCaptureExtension.class)
+	void chunkedPostFormBodiesAre415WithoutAnErrorLog(CapturedOutput output) throws Exception {
+		byte[] overTheFormLimit = ("keys=" + "a".repeat(1_000_000)).getBytes(StandardCharsets.US_ASCII);
+
+		var response = send(request("/v1/app/flags", FORM)
+			.POST(BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(overTheFormLimit))), null);
+
+		assertProblemWithoutCode(response, 415);
+		assertThat(output.getAll()).doesNotContain("InvalidParameterException").doesNotContain(" ERROR ");
+	}
+
+	/**
+	 * parseBodyMethods 只管 body：GET 端點的 {@code @RequestParam} 走 query string，照常被讀到。
+	 * 用非整數的 limit 才有鑑別力——參數被讀到是 400 沒有 code，被忽略則會是 200（預設 50）。
+	 */
+	@Test
+	void queryStringParametersAreStillRead() throws Exception {
+		var response = send(
+				HttpRequest.newBuilder(URI.create("http://localhost:" + this.port + "/v1/me/notes?limit=abc")),
+				signIn(UUID.randomUUID()));
+
+		assertProblemWithoutCode(response, 400);
 	}
 
 	private static void assertProblemWithoutCode(HttpResponse<String> response, int status) {

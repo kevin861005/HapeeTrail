@@ -515,6 +515,9 @@ curl -X POST "$BASE/v1/app/flags" -H "Content-Type: application/json" \
     55 個，都在上限內。這是堵記憶體耗盡攻擊。
   - **非 JSON 的 `Content-Type`（表單、multipart）→ 415 沒有 `code`**（§2）。狀態碼與之前相同，
     差別在服務不再於驗證身分之前讀進 PUT／PATCH／DELETE 的表單 body、也不再解析 multipart；同屬堵記憶體耗盡攻擊。
+    - **POST 表單亦不再讀取**：原本 POST ＋ 表單 body 會被伺服器整份讀進來解析，超過 2MB 時回 **500**；
+      現在與其他 method 一樣，任何大小都直接 415 沒有 `code`，body 不被解析。（body 很大時，伺服器回應後
+      只丟棄最多 2MB 未讀的資料就關閉連線，client 可能看到連線中斷而非 415——正常 client 不會送表單。）
   - 沒有新增、改名或刪除任何 token。
 
 - 2026-10-12 **v4.4.1**（防護性修正，正常 client 無感）：
