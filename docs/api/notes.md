@@ -163,6 +163,8 @@ curl -X PATCH "$BASE/v1/me" \
 2. **沒有 `code`** → 不屬於業務契約：型別／格式錯誤（非法 JSON、欄位型別不對、缺必填、
    path 上的 id 不是合法 uuid）是 **400 沒有 `code`**；請求體超過 256 KiB（262,144 bytes）、
    或 JSON token 超過 10,000 個，同樣是 **400 沒有 `code`**（解析階段就擋下；正常請求遠小於此）。
+   請求體一律是 JSON：有 body 的端點收到 `Content-Type` 不是 JSON 的請求（例如表單
+   `application/x-www-form-urlencoded`、`multipart/form-data`）→ **415 沒有 `code`**（沒帶 token 的仍先是 401）。
    其餘（網路錯誤、平台層錯誤、5xx）走通用重試。這是 v3「第二層閘門」的對應物——規則沒變，只是判準從
    「`code == "P0001"`」變成「有沒有 `code`」。
 3. **401 一律代表 session 問題**（token 缺失、過期、簽章不符、`sub` 缺失或不是 UUID、
@@ -511,6 +513,8 @@ curl -X POST "$BASE/v1/app/flags" -H "Content-Type: application/json" \
     各欄位的上限擋（例如 flags 超過 50 個 key 也是 400 無 code），或在未知欄位上被忽略而回 200。
     最大的合法請求（便條 content 塞滿字串上限）約 192 KiB、token 最多的合法請求（flags 50 個 key）
     55 個，都在上限內。這是堵記憶體耗盡攻擊。
+  - **非 JSON 的 `Content-Type`（表單、multipart）→ 415 沒有 `code`**（§2）。狀態碼與之前相同，
+    差別在服務不再於驗證身分之前讀進 PUT／PATCH／DELETE 的表單 body、也不再解析 multipart；同屬堵記憶體耗盡攻擊。
   - 沒有新增、改名或刪除任何 token。
 
 - 2026-10-12 **v4.4.1**（防護性修正，正常 client 無感）：

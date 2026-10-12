@@ -9,6 +9,15 @@
 （無）
 
 ## 待辦
+- [ ] **T38** POST 表單在 MVC 層仍被 Tomcat 整份解析（T37 複核發現）：`POST` ＋ `application/x-www-form-urlencoded` 打任何
+  `@RequestBody` 端點（含免登入的 `/v1/app/flags`），`EmptyBodyCheckingHttpInputMessage` 在比對 media type 前就呼叫
+  `getParameterMap()` → Tomcat 依 Content-Length 配 `byte[]` 讀整份（上限 `server.tomcat.max-http-form-post-size` 2MB）、
+  Spring 再 URL 重編碼（非 ASCII 膨脹 3 倍）⇒ 單請求約 10–20MB，20–40 條並行可 OOM（heap 約 384MB）；
+  **超過 2MB 時 Tomcat 丟 `InvalidParameterException` → 500 ＋ ERROR 堆疊**，匿名即可灌日誌。
+  修法候選：(a) `WebServerFactoryCustomizer` 把 Connector 的 `parseBodyMethods` 設空字串（Tomcat 不再替任何 method 解析 body，維持 415）
+  (b) 有 body 的 mapping 加 `consumes = "application/json"`（會把缺 Content-Type／`+json` 一併改 415，契約要評估）。
+  測試不能只靠 request wrapper 探針（Tomcat 內部讀取看不到），要在 Tomcat 層驗（調小 maxPostSize 觀察 500→415）。
+  靜態結論（Tomcat 11.0.24／spring-web 7.0.9 bytecode），未實測。
 - [ ] **T37** 🔥 `FormContentFilter` 在驗證身分**之前**就把整份 body 讀進記憶體（T36 複核發現，Boot 4.1.1 預設開、order -9900 早於 Security）：
   任何路徑的 PUT／PATCH／DELETE 帶 `Content-Type: application/x-www-form-urlencoded` ⇒ 匿名、無 token 就能讓服務吃下
   最多 32MiB（Cloud Run 上限）≈ 100MB 記憶體；Tomcat 的 `max-http-form-post-size` 管不到它。修法一行：
