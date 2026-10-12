@@ -9,15 +9,6 @@
 （無）
 
 ## 待辦
-- [ ] **T38** POST 表單在 MVC 層仍被 Tomcat 整份解析（T37 複核發現）：`POST` ＋ `application/x-www-form-urlencoded` 打任何
-  `@RequestBody` 端點（含免登入的 `/v1/app/flags`），`EmptyBodyCheckingHttpInputMessage` 在比對 media type 前就呼叫
-  `getParameterMap()` → Tomcat 依 Content-Length 配 `byte[]` 讀整份（上限 `server.tomcat.max-http-form-post-size` 2MB）、
-  Spring 再 URL 重編碼（非 ASCII 膨脹 3 倍）⇒ 單請求約 10–20MB，20–40 條並行可 OOM（heap 約 384MB）；
-  **超過 2MB 時 Tomcat 丟 `InvalidParameterException` → 500 ＋ ERROR 堆疊**，匿名即可灌日誌。
-  修法候選：(a) `WebServerFactoryCustomizer` 把 Connector 的 `parseBodyMethods` 設空字串（Tomcat 不再替任何 method 解析 body，維持 415）
-  (b) 有 body 的 mapping 加 `consumes = "application/json"`（會把缺 Content-Type／`+json` 一併改 415，契約要評估）。
-  測試不能只靠 request wrapper 探針（Tomcat 內部讀取看不到），要在 Tomcat 層驗（調小 maxPostSize 觀察 500→415）。
-  靜態結論（Tomcat 11.0.24／spring-web 7.0.9 bytecode），未實測。
 - [ ] **T35** 🔥 `Wire.trim`（原 `NoteService.EDGE_WHITESPACE`）的 regex 是 **O(n²)**：上限在 trim 之後才檢查，
   原始字串長度不受限，中段塞一長串空白時 `[ws]+\z` 每個起點都重掃（T34 複核 Opus 實測 JDK 21：
   空白 10k → 80ms、40k → 1.2s，1MB body 約 12 分鐘 CPU；regex 不理會中斷，Cloud Run 逾時只斷連線）。
@@ -71,6 +62,11 @@
 ## 已完成
 
 （30 天內；更舊直接刪，git 歷史即檔案）
+
+- [x] **T38** Tomcat 不解析 urlencoded 表單 body（POST 表單任何大小皆 415，不再 500＋ERROR）；契約仍 v4.4.2
+  ✅ 2026-10-12 上線。證據：commit `95d2665`；Cloud Run **revision 00010**；`./mvnw test` **291 綠**；線上 1MiB 表單 POST
+  `/v1/app/flags` → 415；hosted-smoke **47/47**；newman **24/24**。Opus 實作＋複核（有條件通過，必修已改）。
+  **複核結論：驗證身分前讀 body 的入口已收斂（T35–T38），找不到第五條。**
 
 - [x] **T36＋T37** 請求體總量上限（Jackson document 256KiB／token 10,000／name 256 bytes）＋ 關 `FormContentFilter`／multipart
   （驗證身分前讀整份表單 body）；契約 v4.4.2（防護性，不新增 token）
