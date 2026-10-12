@@ -19,17 +19,6 @@
   同一 UUID 延續；不開放自行註冊）。研究已完成：`docs/research/2026-09-06-supabase-anon-upgrade-native-oauth.md`
   （核心：升級只能用 `linkIdentityWithIdToken`、後端零改動）。spec 與施工票：`.scratch/t25-social-login/`
   ＋票 02 順帶實測 `GET /v1/me` 的 `lastLoginAt`：綁定與重新登入是否刷新 `last_sign_in_at`（T30 契約措辭等這個定稿）
-- [ ] **T26**（#6） 免費公網部署供 tailnet 外手機測試（2026-09-06 裁決：**Cloud Run** asia-northeast1，
-  唯一真免費＋東京本地；OCI 因 7 天閒置回收＋自管 VM 出局）。研究：`docs/research/2026-09-06-free-deploy-platforms.md`；
-  runbook：`.scratch/t26-cloudrun/runbook.md`
-  **2026-09-06 部署完成並驗收**：GCP 專案 `hapeetrail-test`（個人帳號）、
-  服務 `https://hapeetrail-api-134868178961.asia-northeast1.run.app`（revision 00001）。
-  證據：health 200（冷啟動全程 2.2s）、無/壞 token 401 problem+json 鍵序正確、
-  真 GoTrue token 200、newman 5 輪 **80/80 斷言 0 失敗**（平均 91ms）、
-  Kevin 手機行動網路實測 health UP。契約三檔 base_url 已換（check-contract exit 0、redocly valid）。
-  **剩**：①commit＋push（Pages 才會更新）②通知夥伴換 base URL＋移除 ATS 例外 ③Mac 容器退役與否
-  ④（可選）US$1 預算告警。
-  ⚠️ 這是測試部署，不推翻 ADR-0011 的 Fly 生產決定；Cloud Run 若跑得順、要取代 T23 時另立 ADR 討論
 - [ ] **T29**（#8） Apple token 撤銷（註銷帳號時打 Apple `/auth/revoke`，App Store 對 SIWA 的要求）。
   **blocked by T25**（.p8／Service ID 設定）；T28 契約日後加選填 `appleAuthorizationCode` 欄位
   （非破壞性）。送審前 T25＋T28＋T29 三者全關
@@ -62,6 +51,13 @@
 ## 已完成
 
 （30 天內；更舊直接刪，git 歷史即檔案）
+
+- [x] **T26** 免費公網部署供 tailnet 外手機測試 → **Cloud Run** asia-northeast1（#6）
+  ✅ 2026-09-06 部署並驗收（health 冷啟動 2.2s、401 契約、真 token 200、newman 5 輪 80/80、手機行動網路實測）；
+  2026-10-12 結案：剩餘四項——①commit＋push 早已完成 ②通知 WeiWei 換址＝看板 #12（團隊軌，由 WeiWei 關）
+  ③Mac 容器已退役 ④US$1 預算告警屬可選、不做。服務至今 revision 00010，tailnet 路徑全部作廢。
+  研究：`docs/research/2026-09-06-free-deploy-platforms.md`；runbook：`.scratch/t26-cloudrun/runbook.md`。
+  ⚠️ 仍是測試部署，不推翻 ADR-0011 的 Fly 生產決定；要取代時另立 ADR（T23 ④）。
 
 - [x] **T38** Tomcat 不解析 urlencoded 表單 body（POST 表單任何大小皆 415，不再 500＋ERROR）；契約仍 v4.4.2
   ✅ 2026-10-12 上線。證據：commit `95d2665`；Cloud Run **revision 00010**；`./mvnw test` **291 綠**；線上 1MiB 表單 POST
