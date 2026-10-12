@@ -67,6 +67,11 @@
 
 （30 天內；更舊直接刪，git 歷史即檔案）
 
+- [x] **T35** 🔥 `Wire.trim` O(n²) → 線性（匿名帳號可打 CPU DoS）＋ Jackson 字串上限 65,536；契約 v4.4.1
+  ✅ 2026-10-12 上線。證據：commit `9ce2c33`；Cloud Run **revision 00008**；`./mvnw test` **279 綠**（WireTest 以舊 regex 為 oracle
+  比對全部 code point）；線上實測 70k 字元 content → 400；hosted-smoke **47/47**；newman **24/24**。
+  實測：200k 空白 舊 59s → 新 < 0.01ms（複核獨立量 20M 空白 50ms）。Opus 實作＋複核通過；記憶體面另立 T36。
+
 - [x] **T34** `PATCH /v1/me` 更新暱稱（20 code point、trim 同便條、null 清除、不擋重複；表 `hapeetrail_private.profiles`）；
   契約 **v4.4.0** 新增 `nickname_empty`／`nickname_too_long`。看板 #28（WeiWei 串接卡）
   ✅ 2026-10-12 完成並上線。spec 已歸檔：`docs/tasks/archive/update-profile/spec.md`
