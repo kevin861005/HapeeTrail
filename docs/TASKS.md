@@ -18,16 +18,6 @@
   (b) 有 body 的 mapping 加 `consumes = "application/json"`（會把缺 Content-Type／`+json` 一併改 415，契約要評估）。
   測試不能只靠 request wrapper 探針（Tomcat 內部讀取看不到），要在 Tomcat 層驗（調小 maxPostSize 觀察 500→415）。
   靜態結論（Tomcat 11.0.24／spring-web 7.0.9 bytecode），未實測。
-- [ ] **T37** 🔥 `FormContentFilter` 在驗證身分**之前**就把整份 body 讀進記憶體（T36 複核發現，Boot 4.1.1 預設開、order -9900 早於 Security）：
-  任何路徑的 PUT／PATCH／DELETE 帶 `Content-Type: application/x-www-form-urlencoded` ⇒ 匿名、無 token 就能讓服務吃下
-  最多 32MiB（Cloud Run 上限）≈ 100MB 記憶體；Tomcat 的 `max-http-form-post-size` 管不到它。修法一行：
-  `spring.mvc.formcontent.filter.enabled=false`（API 不收表單）＋一條「PATCH 表單大 body → 不吃記憶體、401／415」的測試。
-  順便 `spring.servlet.multipart.enabled=false`（multipart 預設寫到磁碟，Cloud Run 的磁碟是 tmpfs＝記憶體，`/v1/app/*` 免登入可送）。
-  依據：spring-web 7.0.9／spring-boot 4.1.1 bytecode 靜態確認，未實際打過。
-- [ ] **T36** 請求體總量上限（記憶體面 DoS；T35 複核發現）：Jackson 的 `max-document-length`／`max-token-count` 目前都是 -1，
-  8MB 的 `{"keys":[…200 萬個]}` 解析後約 109MB，Cloud Run 單請求 32MiB ⇒ 約 440MB，512MiB 執行個體可能 OOM；
-  `FlagsRequest.keys`、`PATCH /v1/me` 的 Map 都是整份解析完才檢查上限。修法：`spring.jackson.factory.constraints.read.max-document-length`
-  （64KB–1MB）＋必要時 `max-token-count`，`max-name-length` 順便調低，補一條大陣列 body → 400 無 code 的測試；契約補一句。
 - [ ] **T35** 🔥 `Wire.trim`（原 `NoteService.EDGE_WHITESPACE`）的 regex 是 **O(n²)**：上限在 trim 之後才檢查，
   原始字串長度不受限，中段塞一長串空白時 `[ws]+\z` 每個起點都重掃（T34 複核 Opus 實測 JDK 21：
   空白 10k → 80ms、40k → 1.2s，1MB body 約 12 分鐘 CPU；regex 不理會中斷，Cloud Run 逾時只斷連線）。
@@ -81,6 +71,12 @@
 ## 已完成
 
 （30 天內；更舊直接刪，git 歷史即檔案）
+
+- [x] **T36＋T37** 請求體總量上限（Jackson document 256KiB／token 10,000／name 256 bytes）＋ 關 `FormContentFilter`／multipart
+  （驗證身分前讀整份表單 body）；契約 v4.4.2（防護性，不新增 token）
+  ✅ 2026-10-12 上線。證據：commit `308847e`、`3a2eab8`；Cloud Run **revision 00009**；`./mvnw test` **288 綠**；
+  線上實測 300KiB body → 400 無 code、表單 PATCH 無 token 401／有 token 415；hosted-smoke **47/47**；newman **24/24**。
+  各自 Opus 實作＋複核（有條件通過，措辭已修）；複核連環挖出 T38（POST 表單仍由 Tomcat 解析 2MB、超過 500）。
 
 - [x] **T35** 🔥 `Wire.trim` O(n²) → 線性（匿名帳號可打 CPU DoS）＋ Jackson 字串上限 65,536；契約 v4.4.1
   ✅ 2026-10-12 上線。證據：commit `9ce2c33`；Cloud Run **revision 00008**；`./mvnw test` **279 綠**（WireTest 以舊 regex 為 oracle
