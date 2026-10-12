@@ -143,6 +143,7 @@ curl -X PATCH "$BASE/v1/me" \
   trim 後為空 → `nickname_empty`；超過 20 → `nickname_too_long`（`details.maxChars` ＝ 20）。
   回傳的 `nickname` 是 trim 後的版本，**client 應以它更新本地顯示**。
 - ⚠️ 與 `content` 相同：**不得含 U+0000、不得含孤立代理對** → 400 且沒有 `code`。
+- ⚠️ 原始字串（trim 前）超過 65,536 個字元 → **400 且沒有 `code`**（不是 `nickname_too_long`；與 `content` 同一道）。
 - **不檢查重複**（兩個旅人可以同名）、**不做敏感詞過濾**。暱稱目前只回給本人。
 - 冪等：同一個值重送結果相同，timeout 後可以直接重試；第二次設定覆蓋第一次。
 
@@ -262,6 +263,8 @@ curl -X POST "$BASE/v1/notes" \
 - ⚠️ **也不得含孤立代理對**（JSON 逸出 `\ud800`–`\udfff` 沒有配對）。它不是合法的 Unicode
   純量值，存入時會被靜默換成「?」——使用者送的與存的不同、兩側都沒有訊號，所以與 U+0000
   同一桶：**400 且沒有 `code`**。配對正確的 emoji／星群平面字元完全不受影響。
+- ⚠️ 原始字串（trim 前）超過 65,536 個字元 → **400 且沒有 `code`**（解析層就擋下，不是
+  `content_too_long`；那是給 trim 前空白的餘裕，不是第二個字數上限）。
 - **trim 的字元集**＝Unicode 的 White_Space（半角空白、tab、換行、CR、NBSP、
   全形空白 U+3000、各種 en/em space、U+2028/2029…）**再加上 U+001C–U+001F**
   這四個 C0 資訊分隔符。前者與各平台慣用的「whitespaces and newlines」一致；
@@ -499,6 +502,14 @@ curl -X POST "$BASE/v1/app/flags" -H "Content-Type: application/json" \
 > 此後一律 404。它們從來不屬於 v4 契約，也沒有 fallback 可留。
 
 ## 11. Changelog
+
+- 2026-10-12 **v4.4.1**（防護性修正，正常 client 無感）：
+  - 任何 JSON 字串欄位的**原始長度（trim 前）超過 65,536 個 UTF-16 code unit**（emoji 算 2；
+    與其他上限的 code point 計數不同，但正常 app 碰不到）→ 400 且**沒有 `code`**，在解析階段就擋下
+    （§2 的型別／格式錯誤那一類）。原本這種極端輸入會依欄位回有 code 的 `content_too_long`／
+    `nickname_too_long`／`invalid_audience`，或在未知欄位上被忽略；現在一律 400 無 code。正常 app 送不出這種大小的字串；
+    這是堵 CPU 耗盡攻擊的第二道，第一道是 trim 改成線性（伺服器內部、無 wire 影響）。
+  - 沒有新增、改名或刪除任何 token。
 
 - 2026-10-11 **v4.4.0**（新端點＋兩個新 token＝非破壞性，minor bump）：
   - **新增 `PATCH /v1/me`（更新暱稱）**：body `{"nickname": "…"}`，字串＝設定、`null`＝清除、

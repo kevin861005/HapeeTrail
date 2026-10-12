@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "4.4.0"
+  version: "4.4.1"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/HapeeTrail
@@ -136,7 +136,9 @@ paths:
                     但資料庫的文字型別存不下它 → 400 且**沒有 `code`**（型別／格式錯誤），
                     不是 `content_empty`。**也不得含孤立代理對**（沒配對的 `\ud800`–`\udfff`
                     JSON 逸出）：那不是合法的 Unicode 純量值，同樣 400 且沒有 `code`；
-                    配對正確的 emoji／星群平面字元不受影響。詳見 notes.md §4。
+                    配對正確的 emoji／星群平面字元不受影響。
+                    原始字串（trim 前）超過 65,536 個字元 → 400 且**沒有 `code`**
+                    （不是 `content_too_long`）。詳見 notes.md §4。
                 coordinate:
                   allOf: [{ $ref: "#/components/schemas/Coordinate" }]
                   description: 投放位置
@@ -174,7 +176,7 @@ paths:
           description: |
             `invalid_coordinates`｜`content_empty`｜`content_too_long`
             （`details.maxChars`）｜`invalid_style_code`｜`invalid_audience`。
-            另含**沒有 `code`** 的型別／格式錯誤（非法 JSON、欄位型別不對、缺必填）。
+            另含**沒有 `code`** 的型別／格式錯誤（非法 JSON、欄位型別不對、缺必填、`content` 原始字串超過 65,536 個字元）。
           content:
             application/problem+json:
               schema:
@@ -468,6 +470,7 @@ paths:
           本來就沒設也是 200。
         - `nickname` 鍵**必須存在**：缺鍵（含 `{}`、沒有 body）、型別不是字串或 null、
           含 U+0000 或孤立代理對 → 400 且**沒有 `code`**（型別／格式錯誤，與便條 `content` 同一規則）。
+        - 原始字串（trim 前）超過 65,536 個字元 → 400 且**沒有 `code`**（不是 `nickname_too_long`）。
 
         不檢查重複（兩個旅人可以同名）、不做敏感詞過濾。可重複呼叫：第二次覆蓋第一次。
       requestBody:
@@ -494,7 +497,7 @@ paths:
           description: |
             `nickname_empty`｜`nickname_too_long`（`details.maxChars`）。
             另含**沒有 `code`** 的型別／格式錯誤（非法 JSON、缺 `nickname` 鍵、型別不對、
-            含 U+0000 或孤立代理對）。
+            含 U+0000 或孤立代理對、原始字串超過 65,536 個字元）。
           content:
             application/problem+json:
               schema:

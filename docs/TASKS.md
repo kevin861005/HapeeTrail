@@ -9,6 +9,10 @@
 （無）
 
 ## 待辦
+- [ ] **T36** 請求體總量上限（記憶體面 DoS；T35 複核發現）：Jackson 的 `max-document-length`／`max-token-count` 目前都是 -1，
+  8MB 的 `{"keys":[…200 萬個]}` 解析後約 109MB，Cloud Run 單請求 32MiB ⇒ 約 440MB，512MiB 執行個體可能 OOM；
+  `FlagsRequest.keys`、`PATCH /v1/me` 的 Map 都是整份解析完才檢查上限。修法：`spring.jackson.factory.constraints.read.max-document-length`
+  （64KB–1MB）＋必要時 `max-token-count`，`max-name-length` 順便調低，補一條大陣列 body → 400 無 code 的測試；契約補一句。
 - [ ] **T35** 🔥 `Wire.trim`（原 `NoteService.EDGE_WHITESPACE`）的 regex 是 **O(n²)**：上限在 trim 之後才檢查，
   原始字串長度不受限，中段塞一長串空白時 `[ws]+\z` 每個起點都重掃（T34 複核 Opus 實測 JDK 21：
   空白 10k → 80ms、40k → 1.2s，1MB body 約 12 分鐘 CPU；regex 不理會中斷，Cloud Run 逾時只斷連線）。

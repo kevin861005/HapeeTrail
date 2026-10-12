@@ -194,6 +194,9 @@ class UpdateProfileTest extends SupabaseDbTest {
 				Arguments.of("nickname 給布林", "{\"nickname\":true}"),
 				Arguments.of("nickname 給物件", "{\"nickname\":{}}"),
 				Arguments.of("nickname 給陣列", "{\"nickname\":[\"a\"]}"),
+				// T35：原始字串（trim 前）超過 65,536 字元在解析層就擋下，不是 nickname_too_long。
+				Arguments.of("nickname 原始長度超過 65,536 字元",
+						"{\"nickname\":\"" + "a".repeat(70_000) + "\"}"),
 				// 與便條 content 同一桶（NoteService 的理由）：Postgres 的 text 存不下 U+0000，
 				// 孤立代理對轉 UTF-8 會被靜默換掉——格式錯誤，不新增契約 token。
 				Arguments.of("nickname 含 U+0000", "{\"nickname\":\"a\\u0000b\"}"),

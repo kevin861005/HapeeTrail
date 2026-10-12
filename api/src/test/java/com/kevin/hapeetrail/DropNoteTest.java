@@ -262,6 +262,17 @@ class DropNoteTest extends SupabaseDbTest {
 			.hasSize(500);
 	}
 
+	/**
+	 * T35：解析層的原始長度上限（65,536）量的是 trim **之前**；恰好 65,536 仍收，trim 後再走
+	 * 500 的規則。超過的那一側在 {@link #malformedRequestsGet400WithoutACode} 裡。
+	 */
+	@Test
+	void rawContentUpToTheParserLimitIsTrimmedThenCounted() throws Exception {
+		Traveler me = traveler();
+
+		assertThat(created(drop(me, body(me, " ".repeat(65_535) + "a"))).get("content").asString()).isEqualTo("a");
+	}
+
 	/** 500 恰好合法、501 拒絕；計數以 code point 為單位（不是 UTF-16 char）。 */
 	@Test
 	void contentIsAtMostFiveHundredCodePoints() throws Exception {
@@ -492,6 +503,11 @@ class DropNoteTest extends SupabaseDbTest {
 						"{\"content\":1.5,\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"),
 				Arguments.of("content 給布林",
 						"{\"content\":true,\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"),
+				// T35：原始字串（trim 前）超過 65,536 字元在解析層就擋下，不是 content_too_long
+				// ——trim 的成本跟著原始長度走，上限得在 trim 之前。
+				Arguments.of("content 原始長度超過 65,536 字元",
+						"{\"content\":\"" + "a".repeat(70_000)
+								+ "\",\"coordinate\":{\"latitude\":35.6,\"longitude\":139.7}}"),
 				// audience 給數值若被轉成字串，會拿到 invalid_audience（有 code）——
 				// 那是業務錯誤的形狀，而這是型別錯誤。
 				Arguments.of("audience 給數字",
