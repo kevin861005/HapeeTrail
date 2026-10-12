@@ -9,6 +9,12 @@
 （無）
 
 ## 待辦
+- [ ] **T37** 🔥 `FormContentFilter` 在驗證身分**之前**就把整份 body 讀進記憶體（T36 複核發現，Boot 4.1.1 預設開、order -9900 早於 Security）：
+  任何路徑的 PUT／PATCH／DELETE 帶 `Content-Type: application/x-www-form-urlencoded` ⇒ 匿名、無 token 就能讓服務吃下
+  最多 32MiB（Cloud Run 上限）≈ 100MB 記憶體；Tomcat 的 `max-http-form-post-size` 管不到它。修法一行：
+  `spring.mvc.formcontent.filter.enabled=false`（API 不收表單）＋一條「PATCH 表單大 body → 不吃記憶體、401／415」的測試。
+  順便 `spring.servlet.multipart.enabled=false`（multipart 預設寫到磁碟，Cloud Run 的磁碟是 tmpfs＝記憶體，`/v1/app/*` 免登入可送）。
+  依據：spring-web 7.0.9／spring-boot 4.1.1 bytecode 靜態確認，未實際打過。
 - [ ] **T36** 請求體總量上限（記憶體面 DoS；T35 複核發現）：Jackson 的 `max-document-length`／`max-token-count` 目前都是 -1，
   8MB 的 `{"keys":[…200 萬個]}` 解析後約 109MB，Cloud Run 單請求 32MiB ⇒ 約 440MB，512MiB 執行個體可能 OOM；
   `FlagsRequest.keys`、`PATCH /v1/me` 的 Map 都是整份解析完才檢查上限。修法：`spring.jackson.factory.constraints.read.max-document-length`

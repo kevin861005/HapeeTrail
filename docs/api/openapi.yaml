@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Trailstamp Notes API
-  version: "4.4.1"
+  version: "4.4.2"
   license:
     name: Proprietary
     url: https://github.com/kevin861005/HapeeTrail
@@ -30,7 +30,8 @@ info:
 
     **錯誤契約**：RFC 9457 problem+json（`Content-Type: application/problem+json`）。
     業務錯誤帶 `code`（凍結 token，enum 見 `Problem` schema）＋有語意的 HTTP 狀態碼
-    （400／401／403／404／409／422／429）；**型別／格式錯誤是 400 且沒有 `code`**。
+    （400／401／403／404／409／422／429）；**型別／格式錯誤是 400 且沒有 `code`**——
+    請求體超過 256 KiB（262,144 bytes）或 JSON token 超過 10,000 個也屬此類（v4.4.2 起，解析階段就擋下）。
     判斷規則因此只有一條：**有 `code` 才是業務錯誤**——`401` 一律代表 session 問題、
     走刷新流程，不必對 body 做任何比對。
 
