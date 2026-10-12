@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Trailstamp Notes API
+  title: HapeeTrail Notes API
   version: "4.4.2"
   license:
     name: Proprietary

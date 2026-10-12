@@ -6,7 +6,7 @@
 
 **HapeeTrail**：
 產品與專案的唯一名稱；程式識別字（package、DB 角色、artifact）一律沿用此名。
-_Avoid_: Trailstamp（2026-07 起的舊名，文件中殘留待清）
+_Avoid_: Trailstamp（2026-07 起的舊名；2026-10-12 T20 已清，只留在 ADR-0011、歷史紀錄與 `docs/tasks/archive/`）
 
 **登出（Logout）**：
 結束目前登入狀態；登出當下，該帳號所有已簽發的憑證立即失效，沒有殘存有效期。

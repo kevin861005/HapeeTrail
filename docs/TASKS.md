@@ -1,4 +1,4 @@
-# Trailstamp 任務清單
+# HapeeTrail 任務清單
 
 > 唯一任務追蹤器。打勾必附證據（commit / file:line / 指令輸出）。
 > 看板：GitHub Project「HapeeTrail」https://github.com/users/kevin861005/projects/1 ——每個未完成 T 號對應一個 issue（括號內 #N），
@@ -24,8 +24,6 @@
   （非破壞性）。送審前 T25＋T28＋T29 三者全關
 - [ ] **T27**（#7） 棄置匿名帳號清理策略（T25 裁決：MVP 不清）。官方無自動清理；設計時要一起想：
   保留期限、被清帳號留下的便條歸屬（`notes.author_id` 連帶）、排程機制。等規模有感再動
-- [ ] **T20**（#2） 產品正名 Trailstamp → HapeeTrail：CLAUDE.md、openapi 標題、`supabase/config.toml` project_id、
-  ADR／HANDOFF 標題、`docs/index.html`（`CONTEXT.md` 已定案）
 - [ ] **T23**（#3） 上線前的基礎設施收尾（T19 之後；沒有死線，夥伴串接期間服務跑在 Kevin 的 Mac 上）
   ① 綁 Fly 付款方式 → 票 10 剩餘 6 項（`fly apps create hapeetrail` → `fly secrets set` → `fly deploy --ha=false`
   → 真 GoTrue token 打 Fly 200 → `hosted-smoke.sh` 對 Fly 全綠）② 升 Supabase Pro（Free 閒置 7 天會暫停）
@@ -51,6 +49,11 @@
 ## 已完成
 
 （30 天內；更舊直接刪，git 歷史即檔案）
+
+- [x] **T20** 產品正名 Trailstamp → HapeeTrail（#2）
+  ✅ 2026-10-12：TASKS／roadmap 標題、openapi `info.title`、`docs/index.html`（title＋橫幅）、`supabase/config.toml` project_id、
+  HANDOFF 標題、CONTEXT.md 的 _Avoid_ 註記。刻意保留：ADR-0011 正文（append-only）、T5 歷史行、`docs/tasks/archive/`。
+  驗收：`grep -rniI trailstamp` 排除 archive 後只剩 ADR-0011、T5 行、CONTEXT.md 的 _Avoid_ 三處。
 
 - [x] **T26** 免費公網部署供 tailnet 外手機測試 → **Cloud Run** asia-northeast1（#6）
   ✅ 2026-09-06 部署並驗收（health 冷啟動 2.2s、401 契約、真 token 200、newman 5 輪 80/80、手機行動網路實測）；

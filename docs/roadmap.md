@@ -1,4 +1,4 @@
-# Trailstamp Roadmap
+# HapeeTrail Roadmap
 
 ## 第一階段：便條核心循環
 - 依當前位置留下純文字便條（圖片為後續擴充）
